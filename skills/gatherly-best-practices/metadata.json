@@ -1,0 +1,5 @@
+{
+  "version": "0.1.0",
+  "organization": "Gatherly",
+  "abstract": "Project-specific backend rules for transactional attendance, access control, asynchronous notifications, realtime updates, and local Docker operations."
+}

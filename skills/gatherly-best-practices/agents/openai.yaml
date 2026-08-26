@@ -1,0 +1,4 @@
+interface:
+  display_name: "Gatherly Best Practices"
+  short_description: "Apply Gatherly backend workflow rules"
+  default_prompt: "Use $gatherly-best-practices to plan, implement, or review a Gatherly backend feature."
