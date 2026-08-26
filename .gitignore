@@ -1,0 +1,14 @@
+# Local architecture notes and decision records
+docs/
+
+# Dependencies and generated output
+node_modules/
+.pnpm-store/
+.next/
+dist/
+coverage/
+
+# Local configuration and logs
+.env
+.env.local
+*.log

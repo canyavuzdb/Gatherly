@@ -1,0 +1,18 @@
+{
+  "name": "gatherly",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@11.19.0",
+  "engines": { "node": ">=24" },
+  "scripts": {
+    "dev": "pnpm --parallel --filter @gatherly/web --filter @gatherly/api dev",
+    "dev:web": "pnpm --filter @gatherly/web dev",
+    "dev:api": "pnpm --filter @gatherly/api dev",
+    "build": "pnpm --filter @gatherly/web build && pnpm --filter @gatherly/api build",
+    "lint": "pnpm --filter @gatherly/web lint && pnpm --filter @gatherly/api lint",
+    "test": "pnpm --filter @gatherly/api test",
+    "compose:up": "docker compose up --build",
+    "compose:down": "docker compose down",
+    "migration:run": "docker compose --profile tools run --rm migrate"
+  }
+}

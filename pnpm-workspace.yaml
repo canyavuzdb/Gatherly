@@ -1,0 +1,9 @@
+packages:
+  - apps/*
+  - packages/*
+
+# pnpm 11 requires an explicit approval for dependency build scripts.
+# This package is used by the ESLint resolver.
+allowBuilds:
+  '@scarf/scarf': false
+  unrs-resolver: true
