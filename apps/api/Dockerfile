@@ -1,0 +1,22 @@
+FROM node:24-alpine AS base
+WORKDIR /app
+RUN corepack enable
+
+FROM base AS dependencies
+COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
+COPY apps/api/package.json apps/api/package.json
+COPY apps/web/package.json apps/web/package.json
+RUN pnpm install --frozen-lockfile
+
+FROM dependencies AS build
+COPY apps/api apps/api
+RUN pnpm --filter @gatherly/api build
+
+FROM node:24-alpine AS runner
+WORKDIR /app
+ENV NODE_ENV=production
+COPY --from=dependencies /app/node_modules ./node_modules
+COPY --from=dependencies /app/apps/api/node_modules ./apps/api/node_modules
+COPY --from=build /app/apps/api/dist ./apps/api/dist
+EXPOSE 3001
+CMD ["node", "apps/api/dist/main"]
