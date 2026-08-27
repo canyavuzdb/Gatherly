@@ -18,6 +18,9 @@ This gives the MVP a small operational footprint without hiding the production c
 
 - Discover Events by city, district, category, and time.
 - Let a User create and manage only their own Events.
+- Treat a Draft as a complete but unpublished Event, and consume Event Creation Quota when that Draft is created.
+- Require `PRIVATE` Events to be Invite Only; permit Event editing only before its start time and preserve existing Confirmed Attendance when access rules change.
+- Create the Organizer as a Confirmed Attendance, consuming one seat on a bounded Event.
 - Support Public, Unlisted, and Private discovery rules independently from Open, Approval Required, and Invite Only join rules.
 - Keep capacity correct for direct RSVP, organizer approval, cancellation, invitation acceptance, and waitlist promotion.
 - Persist in-app notifications and publish real-time capacity updates after committed changes.
@@ -63,7 +66,7 @@ The backend is a modular monolith: one deployable process with explicit internal
 
 | Module | Owns | Does not own |
 | --- | --- | --- |
-| `auth` | registration, credentials, JWT, current User context | profile presentation or Event permissions |
+| `auth` | registration, credentials, verification, JWT, refresh sessions, current User context | profile presentation or Event permissions |
 | `users` | Profile and monthly Event Creation Quota snapshot | Event metadata or seat allocation |
 | `events` | Event metadata, Location, visibility, categories, organizer ownership | RSVP outcomes and capacity decisions |
 | `attendance` | Attendance state machine, invitations, capacity, waitlist order | Event discovery queries |
@@ -75,7 +78,7 @@ The backend is a modular monolith: one deployable process with explicit internal
 
 ## 5. Domain model at a glance
 
-The [domain glossary](../CONTEXT.md) supplies the canonical terms. The full schema is in [data-model.md](./data-model.md); the important relationships are:
+The [domain glossary](../domain-glossary.md) supplies the canonical terms. The full schema is in [data-model.md](./data-model.md); the important relationships are:
 
 ```mermaid
 erDiagram
@@ -101,7 +104,7 @@ Two distinctions prevent common event-platform failures:
 
 ### Quota as a monthly snapshot
 
-`event_creation_quota_usage` represents a single User in a single calendar month. It holds both the consumed count and the `monthly_event_limit` applicable to that User and month. The initial default is eight.
+`event_creation_quota_usage` represents a single User in a single UTC calendar month. It holds both the consumed count and the `monthly_event_limit` applicable to that User and month. The initial default is eight.
 
 This is intentionally a snapshot rather than a shared global settings row. A future entitlement or paid-package flow can select a different limit when creating the monthly row, while a direct adjustment affects only the intended User and month. The model is therefore extensible without making an MVP payment system a dependency.
 
@@ -115,8 +118,13 @@ PostgreSQL is the authority for business truth. The following rules are contract
 | Only `CONFIRMED` Attendance consumes a seat. | state transition rules plus `events.confirmed_count` synchronization |
 | Confirmed attendance never exceeds a bounded Event's capacity. | event-row lock, check, write, and counter update in one transaction |
 | An Invitation never bypasses capacity. | acceptance enters the same attendance decision flow |
+| A pending Invitation may expire or be revoked without retroactively changing Attendance. | Invitation lifecycle is separate after acceptance |
 | An Organizer manages only Events they created. | authorization against `events.organizer_id` |
 | A User cannot exceed their monthly creation quota. | locked/upserted quota row and `created_count < monthly_event_limit` check |
+| Only a Verified User can perform trust-sensitive actions. | `email_verified_at` gate in command modules |
+| Password reset or User suspension invalidates active sessions. | refresh-session revocation |
+| An Organizer participates in their Event under the same capacity rule. | Event creation atomically creates the Organizer's Confirmed Attendance and initializes `confirmed_count` to one |
+| A cancelled Attendance may be requested again; an Organizer rejection requires an Invitation to reopen participation. | Attendance transition rules distinguish cancellation from rejection |
 | An Event has at most one cover image. | partial unique index on Event media role |
 | Clients receive only persisted capacity state. | publish and emit occur after commit |
 
@@ -150,6 +158,16 @@ sequenceDiagram
 
 The quota check and increment are in the same transaction as Event creation. There is no gap where two concurrent requests can both observe the same remaining quota.
 
+The created Event is a complete Draft. It is not discoverable or joinable until the Organizer publishes it. A Draft or a not-yet-started Published Event can be cancelled; Event cancellation does not rewrite Attendance state. A scheduled system process changes a Published Event to Completed once `ends_at` passes.
+
+An Organizer may edit a Draft or not-yet-started Published Event. A Published Event's access or capacity change is distributed to active attendees after commit. Capacity may never drop below `confirmed_count`; an increase creates the same promotion opportunity as a confirmed cancellation. Publication requires only that the Event starts in the future.
+
+Organizer revise, publish, and cancel commands use the Event version as an optimistic concurrency check, preventing a stale screen from silently replacing a newer Event revision.
+
+Access-rule changes apply prospectively: active Attendance records retain access. Event cancellation preserves historical Attendance, revokes pending Invitations, and notifies active attendees and Invitation recipients. Unlisted share tokens are invalidated when visibility changes away from Unlisted and regenerated when it returns. Any capacity growth and resulting Open-policy promotion share one transaction.
+
+An Organizer cannot be transferred in the MVP. Categories are platform-managed; an Organizer selects only an active Category. A finite capacity increase promotes as many FIFO-eligible Waitlisted Attendances as seats added, while an unlimited `OPEN` Event confirms all eligible Waitlisted Attendances in that transaction.
+
 ### 7.2 RSVP and final-seat contention
 
 ```mermaid
@@ -180,7 +198,7 @@ sequenceDiagram
     end
 ```
 
-For a bounded Event, every seat-changing path locks the same Event row before it checks or changes `confirmed_count`. A cancellation and a waitlist promotion use the same ownership boundary. This serializes contention for a single Event without serializing unrelated Events.
+For a bounded Event, every seat-changing path locks the same Event row before it checks or changes `confirmed_count`. No new join, Organizer decision, or waitlist promotion is accepted at or after `starts_at`. Before then, a cancellation automatically promotes the oldest eligible Waitlisted Attendance for an `OPEN` Event; an `APPROVAL_REQUIRED` Event leaves only the oldest eligible Waitlisted Attendance for an Organizer decision. This serializes contention for a single Event without serializing unrelated Events.
 
 ### 7.3 Post-commit side effects
 
@@ -197,6 +215,10 @@ The MVP accepts a known failure window: a committed database change can exist wh
 
 Consumers are idempotent: duplicate delivery must not duplicate notifications or mutate capacity a second time.
 
+The notification MVP is in-app only. It persists one of the agreed Attendance, Invitation, Event revision, or Event cancellation facts and permits a User to list, mark one read, or mark all read; it has no email, push delivery, preference center, automatic retention policy, or notification-triggered business action. A payload contains presentation data and its target `eventId` only, so a click re-fetches current authorized truth. Different committed revisions remain separate rows, while RabbitMQ redelivery deduplicates through the notification key. A consumer persists a Notification before emitting its short summary to the recipient's authenticated `user:{userId}` room.
+
+Socket.IO emits only committed change facts. `user:{userId}` carries that User's Notification, Attendance, Invitation, and private-access changes. A shared `event:{eventId}` room exists only for Public Events and carries a compact Event/capacity change signal. Unlisted and Private changes go only to affected User rooms; a Socket connection never carries a share token. Every client re-fetches the authorized query projection after an update.
+
 ## 8. Data access and privacy
 
 Discovery queries are optimized for the read path:
@@ -208,6 +230,10 @@ Discovery queries are optimized for the read path:
 
 Authorization is evaluated before data projection. In particular, a Private Event's attendee list and precise address are never inferred from a share token or returned to an unauthorized User. Profiles expose names and selected presentation data under their own visibility rule; they do not expose contact details or attendance history.
 
+A Profile exposes only first name, last name, bio, and authorized avatar. A User may edit it even before email verification. `EVENT_ATTENDEES` lets an Organizer review a requester to decide Attendance, while other Users must both have Confirmed Attendance in the same Event to see one another. `PRIVATE` restricts the Profile to its User except for that Organizer decision context. Visibility changes apply to every later Profile/avatar read. A User can also read their own current monthly Event Creation Quota usage, limit, and remaining count; it is not editable through the product.
+
+General discovery is a PostgreSQL query over future Published Public Events. It requires city and accepts district, Category, and date-range filters; the stable `starts_at, id` cursor returns at most fifty rows ordered by nearest start. It projects a signed-in User's own Attendance status, Event capacity, and remaining seats but never a roster. An Event with an inactive Category remains in city results, though that Category is not offered as a filter. Unlisted and Private Events are excluded; an Unlisted detail needs valid share access, while a Private detail needs Organizer, active Attendance, or valid pending Invitation access. A Public Event remains directly viewable after it is Cancelled or Completed, with its status and no join action. A Personal Calendar separately returns future Organizer Event and active Attendance entries, preserving Cancelled Event cards with their status. The MVP deliberately excludes free-text search, relevance ranking, maps, radius, recommendations, cache, a search index, and a history screen.
+
 ## 9. Failure modes and operational stance
 
 | Failure | Expected behavior | Recovery / guardrail |
@@ -216,10 +242,16 @@ Authorization is evaluated before data projection. In particular, a Private Even
 | Client retries an RSVP | no second Attendance is created | unique constraint and idempotent command handling |
 | RabbitMQ is unavailable after commit | business result remains correct; notification may lag | log failure; reconcile later; outbox is a future upgrade |
 | Socket client disconnects | it can miss a push update | REST re-fetch remains the source of current state |
-| Duplicate consumer delivery | no duplicate visible side effect | idempotent notification/consumer logic |
+| Duplicate consumer delivery | no duplicate visible side effect | idempotent notification/consumer logic and unique notification deduplication key |
 | Media processing fails | asset is not attachable or visible | `media_assets.status` gate |
 
 The local runtime has explicit health checks for PostgreSQL and RabbitMQ. Browser access is limited to the web app, API, Swagger, and RabbitMQ management UI; database and AMQP connections are local-development infrastructure.
+
+The media MVP accepts only JPEG, PNG, and WebP images up to 10 MB. The API validates their actual metadata and writes them to a local Docker volume, then records a Ready Media Asset synchronously; it has no S3, CDN, presigned upload, video, or asynchronous conversion path. A User can choose one Profile avatar. Replacing it preserves the old ready asset for later reuse. An Organizer can attach only their own Ready assets to a pre-start Event, with at most one Cover and five Gallery images; setting a Cover replaces the earlier Cover atomically. A used asset must be detached before deletion. Media delivery checks the Profile or Event access rule for every request rather than publishing an unrestricted storage URL. Self-deletion marks every asset owned by that User Deleted and removes its Profile and Event Media links.
+
+Email verification uses a local Mailpit adapter rather than a live email provider. The adapter delivers the same verification link and token flow to a local inbox, so verification remains testable without a domain, SMTP account, or external recipient. Registration creates an unverified but signed-in User; the Verified User gate limits its available actions. Verification resend is limited to one request per User per sixty seconds.
+
+The MVP does not offer email-address changes. Passwords use Argon2id digests, have a minimum length of twelve, and are checked against a small versioned common-password deny list; it has no character-class rule. Password reset links expire in one hour and invalidate prior unused links. Reset and verification-resend requests return a generic result regardless of whether an email can receive a link; registration explicitly reports an existing email. A User may have up to five concurrent refresh sessions on multiple browsers or devices; a new sixth sign-in revokes the oldest session, while refresh rotation and normal logout affect only the presented one. The MVP has no device-management screen. Refresh secrets are delivered only via `HttpOnly`, `SameSite=Lax` cookies, with `Secure` enabled outside local HTTP development. Password change and self-deletion require the current password as re-authentication. A successful reset revokes all previous sessions and signs the requesting browser into one new session. Platform suspension blocks sign-in and revokes sessions. Self-deletion first revokes all pending Invitations addressed to the User, then irreversibly pseudonymizes User presentation data while preserving the identifier and historical Event/Attendance references; it permits a future registration with the original email as a wholly new User. It is unavailable until the User has cancelled every active future Attendance and every future Event they organize.
 
 ## 10. Validation strategy
 
@@ -246,8 +278,6 @@ Unit tests validate state-transition rules; integration tests validate the datab
 
 ## 12. Reading map
 
-- [Architecture](./architecture.md) explains the concrete module and runtime plan.
+- [Application architecture](./application.md) explains the concrete module and runtime plan.
 - [Data model](./data-model.md) defines every persisted tuple, constraint, and index.
-- [ADR 0001](./adr/0001-modular-monolith.md) records why Gatherly begins as a modular monolith.
-- [Domain glossary](../CONTEXT.md) defines the vocabulary used throughout these documents.
-
+- [Domain glossary](../domain-glossary.md) defines the vocabulary used throughout these documents.
