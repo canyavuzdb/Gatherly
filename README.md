@@ -2,7 +2,7 @@
 
 Gatherly is a community-driven event platform for discovering, creating, and joining local events. It is being built as a production-minded learning project around transactional RSVP flows, role-aware access control, asynchronous messaging, and real-time capacity updates.
 
-> **Project status:** Foundation and architecture work in progress. The repository currently contains Gatherly-specific engineering skills; application code will follow.
+> **Project status:** Core API modules and the web application are implemented locally; current work focuses on product flows, integration coverage, and UI refinement.
 
 ## Why Gatherly?
 
@@ -19,7 +19,7 @@ An event platform is a useful real-world domain for learning how data consistenc
 - RSVP, approval, invitation, capacity, and waitlist flows
 - Personal event calendar and basic notifications
 - Real-time attendee and capacity updates
-- Monthly event creation quota for the free plan
+- Per-User monthly Event creation quota, stored as a monthly snapshot (default: eight Events)
 
 ## Architecture goals
 
@@ -40,6 +40,12 @@ Socket.IO ----> connected clients
 
 The RSVP decision remains in a PostgreSQL transaction. RabbitMQ handles side effects after a successful commit, while Socket.IO communicates persisted capacity changes to connected clients.
 
+## Documentation
+
+The design documents are part of the project, not generated scaffolding. They record the invariants and module contracts that implementation must preserve.
+
+Start with the [documentation index](./docs/README.md), then read the [system design](./docs/architecture/system.md) and [data model](./docs/architecture/data-model.md).
+
 ## Planned stack
 
 | Area | Technology |
@@ -54,26 +60,16 @@ The RSVP decision remains in a PostgreSQL transaction. RabbitMQ handles side eff
 | API documentation | Swagger / OpenAPI |
 | CI | GitHub Actions |
 
-## Engineering rules
-
-The repository includes a project-specific skill at [`skills/gatherly-best-practices`](./skills/gatherly-best-practices). It captures the invariants that matter most to this project:
-
-- Confirmed attendance is the only state that consumes capacity.
-- RSVP, approval, cancellation, and waitlist promotion are transactional.
-- Visibility and join policy are different access-control concerns.
-- RabbitMQ events are published only after database commit.
-- Socket.IO communicates persisted state; it does not decide RSVP outcomes.
-- Final-seat contention and duplicate RSVP requests require integration coverage.
-
 ## Local development
 
-The application and Docker Compose stack will be added in the next implementation phase. The target local services are:
+The application runs locally through Docker Compose. Available local services are:
 
 ```text
 web       http://localhost:3000
 api       http://localhost:3001
 swagger   http://localhost:3001/docs
 rabbitmq  http://localhost:15672
+mailpit   http://localhost:8025
 postgres  localhost:5432
 ```
 

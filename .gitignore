@@ -1,6 +1,3 @@
-# Local architecture notes and decision records
-docs/
-
 # Dependencies and generated output
 node_modules/
 .pnpm-store/
@@ -12,3 +9,15 @@ coverage/
 .env
 .env.local
 *.log
+
+# Local agent and learning workspace (not part of the public project)
+.agents/
+.local/
+MISSION.md
+NOTES.md
+RESOURCES.md
+learning-records/
+lessons/
+reference/
+skills/
+skills-lock.json
