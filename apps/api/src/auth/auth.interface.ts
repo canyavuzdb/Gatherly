@@ -56,6 +56,7 @@ export type ChangePassword = {
   currentPassword: string;
   newPassword: string;
 };
+export type SelfDelete = { kind: 'SELF_DELETE'; actorUserId: UserId; currentPassword: string };
 
 export type AuthCommand =
   | Register
@@ -66,7 +67,8 @@ export type AuthCommand =
   | ResendVerification
   | RequestPasswordReset
   | ResetPassword
-  | ChangePassword;
+  | ChangePassword
+  | SelfDelete;
 
 export type SessionGrant = {
   kind: 'SESSION_GRANTED';
@@ -81,7 +83,8 @@ export type AuthOutcome =
   | { kind: 'SIGNED_OUT' }
   | { kind: 'EMAIL_VERIFIED'; identity: UserIdentity }
   | { kind: 'REQUEST_ACCEPTED' }
-  | { kind: 'PASSWORD_CHANGED' };
+  | { kind: 'PASSWORD_CHANGED' }
+  | { kind: 'SELF_DELETED' };
 
 export interface AuthModule {
   decide(command: AuthCommand): Promise<AuthOutcome>;

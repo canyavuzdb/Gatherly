@@ -1,8 +1,13 @@
 import { DataSource } from 'typeorm';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { createDatabaseOptions } from '../config/database.config';
 import type { PasswordResetEmail, VerificationEmail } from './auth.email';
 import { AuthImplementation } from './auth.implementation';
 import type { AuthModule, AuthOutcome, SessionGrant } from './auth.interface';
+import { MediaImplementation } from '../media/media.implementation';
+import { LocalMediaStorage } from '../media/media.storage';
 
 describe('AuthModule registration', () => {
   let dataSource: DataSource;
@@ -10,6 +15,7 @@ describe('AuthModule registration', () => {
   let verificationEmails: VerificationEmail[];
   let passwordResetEmails: PasswordResetEmail[];
   let currentTime: Date;
+  let mediaStorageDirectory: string;
 
   beforeAll(async () => {
     const databaseUrl = process.env.DATABASE_URL;
@@ -20,6 +26,8 @@ describe('AuthModule registration', () => {
     dataSource = new DataSource(createDatabaseOptions(databaseUrl));
     await dataSource.initialize();
     await dataSource.runMigrations();
+    mediaStorageDirectory = await mkdtemp(join(tmpdir(), 'gatherly-auth-media-'));
+    const media = new MediaImplementation(dataSource, new LocalMediaStorage(mediaStorageDirectory));
     verificationEmails = [];
     passwordResetEmails = [];
     auth = new AuthImplementation(dataSource, {
@@ -31,11 +39,14 @@ describe('AuthModule registration', () => {
         passwordResetEmails.push(message);
       },
       now: () => currentTime,
+      retireOwnedMedia: media.retireOwnedAssetsInTransaction.bind(media),
+      removeRetiredMediaFiles: media.removeRetiredFiles.bind(media),
     });
   });
 
   afterAll(async () => {
     await dataSource?.destroy();
+    await rm(mediaStorageDirectory, { recursive: true, force: true });
   });
 
   beforeEach(async () => {
@@ -301,6 +312,45 @@ describe('AuthModule registration', () => {
         refreshSecret: registration.refreshSecret,
       }),
     ).rejects.toMatchObject({ code: 'REFRESH_SESSION_INVALID' });
+  });
+
+  it('pseudonymizes a user and invalidates their access after self-delete', async () => {
+    const registration = asSessionGrant(await auth.decide({ kind: 'REGISTER', email: 'delete@example.com', password: 'correct-horse-battery-staple', firstName: 'Delete', lastName: 'Me' }));
+    const categoryId = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+    const eventId = 'ffffffff-ffff-4fff-8fff-ffffffffffff';
+    const mediaAssetId = 'abababab-abab-4bab-8bab-abababababab';
+    await dataSource.query("INSERT INTO categories (id,name,slug,updated_by_kind) VALUES ($1,'Deletion','deletion','SYSTEM')", [categoryId]);
+    await dataSource.query("INSERT INTO events (id,organizer_id,category_id,title,description,starts_at,ends_at,timezone,capacity,confirmed_count,visibility,join_policy,status,created_by_user_id,updated_by_kind) VALUES ($1,$2,$3,'Past event','Description','2026-08-01T10:00:00Z','2026-08-01T11:00:00Z','Europe/Istanbul',2,1,'PUBLIC','OPEN','COMPLETED',$2,'USER')", [eventId, registration.identity.userId, categoryId]);
+    await dataSource.query("INSERT INTO media_assets (id,owner_user_id,storage_key,mime_type,byte_size,width,height,status,updated_by_user_id,updated_by_kind) VALUES ($1,$2,'delete-test.png','image/png',1,1,1,'READY',$2,'USER')", [mediaAssetId, registration.identity.userId]);
+    await dataSource.query("UPDATE profiles SET avatar_media_asset_id = $1 WHERE user_id = $2", [mediaAssetId, registration.identity.userId]);
+    await dataSource.query("INSERT INTO event_media (event_id,media_asset_id,role,position,added_by_user_id,updated_by_user_id,updated_by_kind) VALUES ($1,$2,'COVER',0,$3,$3,'USER')", [eventId, mediaAssetId, registration.identity.userId]);
+    await expect(auth.decide({ kind: 'SELF_DELETE', actorUserId: registration.identity.userId, currentPassword: 'correct-horse-battery-staple' })).resolves.toEqual({ kind: 'SELF_DELETED' });
+    await expect(auth.authenticate(registration.accessToken)).rejects.toMatchObject({ code: 'ACCESS_TOKEN_INVALID' });
+    await expect(auth.decide({ kind: 'REFRESH_SESSION', refreshSecret: registration.refreshSecret })).rejects.toMatchObject({ code: 'REFRESH_SESSION_INVALID' });
+    await expect(dataSource.query('SELECT status, email FROM users WHERE id = $1', [registration.identity.userId])).resolves.toEqual([{ status: 'DELETED', email: `deleted+${registration.identity.userId}@invalid.local` }]);
+    await expect(dataSource.query('SELECT first_name, last_name, bio, visibility FROM profiles WHERE user_id = $1', [registration.identity.userId])).resolves.toEqual([{ first_name: 'Deleted', last_name: 'User', bio: null, visibility: 'PRIVATE' }]);
+    await expect(dataSource.query('SELECT avatar_media_asset_id FROM profiles WHERE user_id = $1', [registration.identity.userId])).resolves.toEqual([{ avatar_media_asset_id: null }]);
+    await expect(dataSource.query('SELECT status, deleted_by_user_id FROM media_assets WHERE id = $1', [mediaAssetId])).resolves.toEqual([{ status: 'DELETED', deleted_by_user_id: registration.identity.userId }]);
+    await expect(dataSource.query('SELECT id FROM event_media WHERE media_asset_id = $1', [mediaAssetId])).resolves.toEqual([]);
+  });
+
+  it('blocks self-delete when the user organizes a future event', async () => {
+    const registration = asSessionGrant(await auth.decide({ kind: 'REGISTER', email: 'future-organizer@example.test', password: 'correct-horse-battery-staple', firstName: 'Future', lastName: 'Organizer' }));
+    const category = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'; const event = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+    await dataSource.query("INSERT INTO categories (id,name,slug,updated_by_kind) VALUES ($1,'Testing','testing','SYSTEM')", [category]);
+    await dataSource.query("INSERT INTO events (id,organizer_id,category_id,title,description,starts_at,ends_at,timezone,capacity,confirmed_count,visibility,join_policy,status,created_by_user_id,updated_by_kind) VALUES ($1,$2,$3,'Future','Event','2099-01-01T18:00:00Z','2099-01-01T20:00:00Z','Europe/Istanbul',2,1,'PUBLIC','OPEN','PUBLISHED',$2,'USER')", [event, registration.identity.userId, category]);
+    await expect(auth.decide({ kind: 'SELF_DELETE', actorUserId: registration.identity.userId, currentPassword: 'correct-horse-battery-staple' })).rejects.toMatchObject({ code: 'SELF_DELETE_BLOCKED_BY_FUTURE_EVENTS' });
+    await expect(dataSource.query('SELECT status FROM users WHERE id = $1', [registration.identity.userId])).resolves.toEqual([{ status: 'ACTIVE' }]);
+  });
+
+  it('blocks self-delete when the user has an active future attendance', async () => {
+    const attendee = asSessionGrant(await auth.decide({ kind: 'REGISTER', email: 'future-attendee@example.test', password: 'correct-horse-battery-staple', firstName: 'Future', lastName: 'Attendee' }));
+    const organizer = asSessionGrant(await auth.decide({ kind: 'REGISTER', email: 'future-event-owner@example.test', password: 'correct-horse-battery-staple', firstName: 'Event', lastName: 'Owner' }));
+    const category = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc'; const event = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+    await dataSource.query("INSERT INTO categories (id,name,slug,updated_by_kind) VALUES ($1,'Testing two','testing-two','SYSTEM')", [category]);
+    await dataSource.query("INSERT INTO events (id,organizer_id,category_id,title,description,starts_at,ends_at,timezone,capacity,confirmed_count,visibility,join_policy,status,created_by_user_id,updated_by_kind) VALUES ($1,$2,$3,'Future','Event','2099-01-01T18:00:00Z','2099-01-01T20:00:00Z','Europe/Istanbul',2,1,'PUBLIC','OPEN','PUBLISHED',$2,'USER')", [event, organizer.identity.userId, category]);
+    await dataSource.query("INSERT INTO attendances (event_id,user_id,status,waitlist_opt_in,requested_at,confirmed_at,updated_by_user_id,updated_by_kind) VALUES ($1,$2,'CONFIRMED',false,now(),now(),$2,'USER')", [event, attendee.identity.userId]);
+    await expect(auth.decide({ kind: 'SELF_DELETE', actorUserId: attendee.identity.userId, currentPassword: 'correct-horse-battery-staple' })).rejects.toMatchObject({ code: 'SELF_DELETE_BLOCKED_BY_ACTIVE_ATTENDANCES' });
   });
 });
 

@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import * as argon2 from 'argon2';
 import { sign, verify } from 'jsonwebtoken';
-import { DataSource, IsNull, Not, QueryFailedError } from 'typeorm';
+import { DataSource, EntityManager, IsNull, Not, QueryFailedError } from 'typeorm';
 import { AuthBusinessError } from './auth.errors';
 import type { AuthEmailDelivery } from './auth.email';
 import type {
@@ -17,9 +17,11 @@ import type {
   SessionGrant,
   SignIn,
   SignOut,
+  SelfDelete,
   UserIdentity,
   VerifyEmail,
 } from './auth.interface';
+import { AttendanceRecord, EventRecord, InvitationRecord } from '../events/events.persistence';
 import {
   EmailVerificationTokenRecord,
   PasswordResetTokenRecord,
@@ -41,6 +43,8 @@ type AuthDependencies = {
   sendPasswordResetEmail: AuthEmailDelivery['sendPasswordResetEmail'];
   now?: () => Date;
   randomSecret?: () => string;
+  retireOwnedMedia?: (manager: EntityManager, userId: string, now: Date) => Promise<string[]>;
+  removeRetiredMediaFiles?: (storageKeys: string[]) => Promise<void>;
 };
 
 export class AuthImplementation implements AuthModule {
@@ -76,7 +80,28 @@ export class AuthImplementation implements AuthModule {
         return this.resetPassword(command);
       case 'CHANGE_PASSWORD':
         return this.changePassword(command);
+      case 'SELF_DELETE':
+        return this.selfDelete(command);
     }
+  }
+
+  private async selfDelete(command: SelfDelete): Promise<AuthOutcome> {
+    const retiredMediaKeys = await this.dataSource.transaction(async (manager) => {
+      const user = await manager.findOne(UserRecord, { where: { id: command.actorUserId }, lock: { mode: 'pessimistic_write' } });
+      if (!user || user.status !== 'ACTIVE' || !(await argon2.verify(user.passwordHash, command.currentPassword))) throw new AuthBusinessError('CURRENT_PASSWORD_INCORRECT');
+      const now = this.now();
+      if (await manager.getRepository(EventRecord).createQueryBuilder('event').where('event.organizer_id = :userId AND event.starts_at > :now', { userId: user.id, now }).getExists()) throw new AuthBusinessError('SELF_DELETE_BLOCKED_BY_FUTURE_EVENTS');
+      if (await manager.getRepository(AttendanceRecord).createQueryBuilder('attendance').innerJoin(EventRecord, 'event', 'event.id = attendance.event_id').where("attendance.user_id = :userId AND event.starts_at > :now AND attendance.status IN ('CONFIRMED','PENDING','WAITLISTED')", { userId: user.id, now }).getExists()) throw new AuthBusinessError('SELF_DELETE_BLOCKED_BY_ACTIVE_ATTENDANCES');
+      await manager.createQueryBuilder().update(RefreshSessionRecord).set({ revokedAt: now }).where('user_id = :userId AND revoked_at IS NULL', { userId: user.id }).execute();
+      await manager.createQueryBuilder().update(InvitationRecord).set({ status: 'REVOKED', revokedAt: now, updatedByUserId: user.id, updatedByKind: 'USER' }).where("recipient_user_id = :userId AND status = 'PENDING'", { userId: user.id }).execute();
+      const storageKeys = this.dependencies.retireOwnedMedia ? await this.dependencies.retireOwnedMedia(manager, user.id, now) : [];
+      const profile = await manager.findOneBy(ProfileRecord, { userId: user.id });
+      if (profile) { profile.firstName = 'Deleted'; profile.lastName = 'User'; profile.bio = null; profile.avatarMediaAssetId = null; profile.visibility = 'PRIVATE'; profile.updatedByUserId = user.id; profile.updatedByKind = 'USER'; profile.version += 1; await manager.save(profile); }
+      user.email = `deleted+${user.id}@invalid.local`; user.status = 'DELETED'; user.emailVerifiedAt = null; user.version += 1; await manager.save(user);
+      return storageKeys;
+    });
+    await this.dependencies.removeRetiredMediaFiles?.(retiredMediaKeys);
+    return { kind: 'SELF_DELETED' };
   }
 
   async authenticate(accessToken: string): Promise<UserIdentity> {

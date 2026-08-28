@@ -1,8 +1,12 @@
 import { DataSource } from 'typeorm';
 import { ProfileRecord, UserRecord } from '../auth/auth.persistence';
+import { AttendanceRecord, EventRecord } from '../events/events.persistence';
+import { EventCreationQuotaUsageRecord } from '../events/events.persistence';
 import { UsersBusinessError } from './users.errors';
 import type {
   OwnProfileView,
+  OpenProfile,
+  ProfileView,
   ReviseMyProfile,
   UsersModule,
 } from './users.interface';
@@ -52,6 +56,27 @@ export class UsersImplementation implements UsersModule {
       };
     });
   }
+
+  async openProfile(query: OpenProfile): Promise<ProfileView> {
+    const profile = await this.dataSource.getRepository(ProfileRecord).findOneBy({ userId: query.subjectUserId });
+    if (!profile) {
+      throw new UsersBusinessError('PROFILE_NOT_FOUND_OR_NOT_VIEWABLE');
+    }
+    const isSelf = query.viewer?.userId === profile.userId;
+    const canView = profile.visibility === 'PUBLIC' || isSelf || (profile.visibility === 'EVENT_ATTENDEES' && await this.hasSharedConfirmedEvent(query.viewer?.userId, profile.userId)) || (query.viewer && query.decisionContext?.purpose === 'ATTENDANCE_DECISION' && await this.isOrganizerDecisionViewer(query.viewer.userId, profile.userId, query.decisionContext.eventId));
+    if (!canView) throw new UsersBusinessError('PROFILE_NOT_FOUND_OR_NOT_VIEWABLE');
+    return { userId: profile.userId, firstName: profile.firstName, lastName: profile.lastName, bio: profile.bio, avatar: profile.avatarMediaAssetId ? { mediaAssetId: profile.avatarMediaAssetId } : null };
+  }
+
+  async currentEventCreationQuota(query: import('./users.interface').CurrentEventCreationQuota): Promise<import('./users.interface').QuotaView> {
+    const periodStart = new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), 1)).toISOString().slice(0, 10);
+    const row = await this.dataSource.getRepository(EventCreationQuotaUsageRecord).findOneBy({ userId: query.actor.userId, periodStart });
+    const createdCount = row?.createdCount ?? 0; const monthlyEventLimit = row?.monthlyEventLimit ?? 8;
+    return { periodStart, createdCount, monthlyEventLimit, remainingCount: Math.max(monthlyEventLimit - createdCount, 0) };
+  }
+
+  private async hasSharedConfirmedEvent(viewerUserId: string | undefined, subjectUserId: string) { if (!viewerUserId) return false; const match = await this.dataSource.getRepository(AttendanceRecord).createQueryBuilder('subject').innerJoin(AttendanceRecord, 'viewer', "viewer.event_id = subject.event_id AND viewer.user_id = :viewerUserId AND viewer.status = 'CONFIRMED'").where("subject.user_id = :subjectUserId AND subject.status = 'CONFIRMED'", { viewerUserId, subjectUserId }).getOne(); return Boolean(match); }
+  private async isOrganizerDecisionViewer(viewerUserId: string, subjectUserId: string, eventId: string) { const event = await this.dataSource.getRepository(EventRecord).findOneBy({ id: eventId, organizerId: viewerUserId }); if (!event) return false; const attendance = await this.dataSource.getRepository(AttendanceRecord).findOneBy({ eventId, userId: subjectUserId }); return attendance?.status === 'PENDING' || attendance?.status === 'WAITLISTED'; }
 
   private assertProfileInput(
     firstName: string,

@@ -7,7 +7,9 @@ export type AuthErrorCode =
   | 'PASSWORD_RESET_TOKEN_INVALID_OR_EXPIRED'
   | 'REFRESH_SESSION_INVALID'
   | 'VERIFICATION_TOKEN_INVALID_OR_EXPIRED'
-  | 'VERIFICATION_RESEND_TOO_SOON';
+  | 'VERIFICATION_RESEND_TOO_SOON'
+  | 'SELF_DELETE_BLOCKED_BY_FUTURE_EVENTS'
+  | 'SELF_DELETE_BLOCKED_BY_ACTIVE_ATTENDANCES';
 
 export class AuthBusinessError extends Error {
   constructor(public readonly code: AuthErrorCode) {

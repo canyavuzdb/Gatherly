@@ -23,7 +23,12 @@ export type ReviseMyProfile = {
   bio: string | null;
   visibility: ProfileVisibility;
 };
+export type OpenProfile = { viewer: UserIdentity | null; subjectUserId: UserId; decisionContext?: { eventId: string; purpose: 'ATTENDANCE_DECISION' } };
+export type CurrentEventCreationQuota = { actor: UserIdentity };
+export type QuotaView = { periodStart: string; createdCount: number; monthlyEventLimit: number; remainingCount: number };
 
 export interface UsersModule {
   reviseMyProfile(command: ReviseMyProfile): Promise<OwnProfileView>;
+  openProfile(query: OpenProfile): Promise<ProfileView>;
+  currentEventCreationQuota(query: CurrentEventCreationQuota): Promise<QuotaView>;
 }

@@ -4,6 +4,9 @@ import {
   ConflictException,
   Controller,
   Headers,
+  Get,
+  NotFoundException,
+  Param,
   HttpCode,
   HttpStatus,
   Patch,
@@ -56,6 +59,27 @@ export class UsersHttpController {
     private readonly auth: AuthImplementation,
     private readonly users: UsersImplementation,
   ) {}
+
+  @Get(':userId/profile')
+  async openProfile(@Headers('authorization') authorization: string | undefined, @Param('userId') userId: string) {
+    const accessToken = readBearerToken(authorization);
+    try {
+      const viewer = accessToken ? await this.auth.authenticate(accessToken) : null;
+      return await this.users.openProfile({ viewer, subjectUserId: userId });
+    } catch (error) {
+      if (error instanceof AuthBusinessError) throw new UnauthorizedException(error.code);
+      if (error instanceof UsersBusinessError && error.code === 'PROFILE_NOT_FOUND_OR_NOT_VIEWABLE') throw new NotFoundException(error.code);
+      throw error;
+    }
+  }
+
+  @Get('me/event-creation-quota')
+  async currentQuota(@Headers('authorization') authorization: string | undefined) {
+    const accessToken = readBearerToken(authorization);
+    if (!accessToken) throw new UnauthorizedException('ACCESS_TOKEN_INVALID');
+    try { return await this.users.currentEventCreationQuota({ actor: await this.auth.authenticate(accessToken) }); }
+    catch (error) { if (error instanceof AuthBusinessError) throw new UnauthorizedException(error.code); throw error; }
+  }
 
   @Patch('me/profile')
   @HttpCode(HttpStatus.OK)

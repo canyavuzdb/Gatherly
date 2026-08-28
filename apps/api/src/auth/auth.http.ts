@@ -78,6 +78,12 @@ class ChangePasswordRequest {
   newPassword!: string;
 }
 
+class SelfDeleteRequest {
+  @IsString()
+  @MinLength(12)
+  currentPassword!: string;
+}
+
 @ApiTags('Auth')
 @Controller('auth')
 export class AuthHttpController {
@@ -161,6 +167,29 @@ export class AuthHttpController {
       secure: process.env.NODE_ENV !== 'development',
     });
     return { kind: 'SIGNED_OUT' };
+  }
+
+  @Post('self-delete')
+  @HttpCode(HttpStatus.OK)
+  async selfDelete(
+    @Headers('authorization') authorization: string | undefined,
+    @Body() request: SelfDeleteRequest,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    const accessToken = readBearerToken(authorization);
+    if (!accessToken) throw new UnauthorizedException('ACCESS_TOKEN_INVALID');
+    try {
+      const actor = await this.auth.authenticate(accessToken);
+      const outcome = await this.auth.decide({ kind: 'SELF_DELETE', actorUserId: actor.userId, currentPassword: request.currentPassword });
+      response.clearCookie('refresh_secret', { httpOnly: true, sameSite: 'lax', secure: process.env.NODE_ENV !== 'development' });
+      return outcome;
+    } catch (error) {
+      if (error instanceof AuthBusinessError) {
+        if (error.code === 'ACCESS_TOKEN_INVALID' || error.code === 'CURRENT_PASSWORD_INCORRECT') throw new UnauthorizedException(error.code);
+        throw new BadRequestException(error.code);
+      }
+      throw error;
+    }
   }
 
   @Post('verify-email')
