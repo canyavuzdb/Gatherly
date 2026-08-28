@@ -17,10 +17,12 @@ export class MediaImplementation implements MediaModule {
 
   async decide(command: MediaCommand): Promise<MediaOutcome> {
     if (command.kind === 'UPLOAD_IMAGE') return this.upload(command);
+    if (command.kind === 'SET_PROFILE_AVATAR') return this.setProfileAvatar(command);
+    if (command.kind === 'CLEAR_PROFILE_AVATAR') return this.clearProfileAvatar(command);
     if (command.kind === 'ATTACH_EVENT_MEDIA') return this.attachEventMedia(command);
     if (command.kind === 'DETACH_EVENT_MEDIA') return this.detachEventMedia(command);
     if (command.kind === 'DELETE_MEDIA_ASSET') return this.deleteMediaAsset(command);
-    return this.setProfileAvatar(command);
+    throw new Error('Unexpected media command.');
   }
 
   async listOwned(request: { actor: MediaIdentity }): Promise<OwnedMediaAsset[]> {
@@ -109,6 +111,21 @@ export class MediaImplementation implements MediaModule {
       await manager.save(profile);
     });
     return { kind: 'PROFILE_AVATAR_SET', mediaAssetId: command.mediaAssetId };
+  }
+
+  private async clearProfileAvatar(command: Extract<MediaCommand, { kind: 'CLEAR_PROFILE_AVATAR' }>): Promise<MediaOutcome> {
+    await this.requireVerifiedActiveUser(command.actor);
+    await this.dataSource.transaction(async (manager) => {
+      const profile = await manager.getRepository(ProfileRecord).findOneBy({ userId: command.actor.userId });
+      if (!profile) throw new MediaBusinessError('MEDIA_NOT_FOUND');
+      if (!profile.avatarMediaAssetId) return;
+      profile.avatarMediaAssetId = null;
+      profile.updatedByUserId = command.actor.userId;
+      profile.updatedByKind = 'USER';
+      profile.version += 1;
+      await manager.save(profile);
+    });
+    return { kind: 'PROFILE_AVATAR_CLEARED' };
   }
 
   private async attachEventMedia(command: Extract<MediaCommand, { kind: 'ATTACH_EVENT_MEDIA' }>): Promise<MediaOutcome> {

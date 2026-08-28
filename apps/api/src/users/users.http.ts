@@ -60,6 +60,19 @@ export class UsersHttpController {
     private readonly users: UsersImplementation,
   ) {}
 
+  @Get('me/profile')
+  async openMyProfile(@Headers('authorization') authorization: string | undefined) {
+    const accessToken = readBearerToken(authorization);
+    if (!accessToken) throw new UnauthorizedException('ACCESS_TOKEN_INVALID');
+    try {
+      return await this.users.openMyProfile(await this.auth.authenticate(accessToken));
+    } catch (error) {
+      if (error instanceof AuthBusinessError) throw new UnauthorizedException(error.code);
+      if (error instanceof UsersBusinessError) throw new NotFoundException(error.code);
+      throw error;
+    }
+  }
+
   @Get(':userId/profile')
   async openProfile(@Headers('authorization') authorization: string | undefined, @Param('userId') userId: string) {
     const accessToken = readBearerToken(authorization);

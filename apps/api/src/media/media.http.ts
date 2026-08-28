@@ -83,6 +83,12 @@ export class MediaHttpController {
     }));
   }
 
+  @Delete('media/profile/avatar')
+  @HttpCode(HttpStatus.OK)
+  async clearProfileAvatar(@Headers('authorization') authorization: string | undefined) {
+    return this.withActor(authorization, (actor) => this.media.decide({ kind: 'CLEAR_PROFILE_AVATAR', actor }));
+  }
+
   @Post('events/:eventId/media')
   async attachEventMedia(
     @Headers('authorization') authorization: string | undefined,

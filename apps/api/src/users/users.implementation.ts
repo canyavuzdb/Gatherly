@@ -45,6 +45,8 @@ export class UsersImplementation implements UsersModule {
 
       return {
         userId: profile.userId,
+        email: user.email,
+        emailVerified: Boolean(user.emailVerifiedAt),
         firstName: profile.firstName,
         lastName: profile.lastName,
         bio: profile.bio,
@@ -66,6 +68,25 @@ export class UsersImplementation implements UsersModule {
     const canView = profile.visibility === 'PUBLIC' || isSelf || (profile.visibility === 'EVENT_ATTENDEES' && await this.hasSharedConfirmedEvent(query.viewer?.userId, profile.userId)) || (query.viewer && query.decisionContext?.purpose === 'ATTENDANCE_DECISION' && await this.isOrganizerDecisionViewer(query.viewer.userId, profile.userId, query.decisionContext.eventId));
     if (!canView) throw new UsersBusinessError('PROFILE_NOT_FOUND_OR_NOT_VIEWABLE');
     return { userId: profile.userId, firstName: profile.firstName, lastName: profile.lastName, bio: profile.bio, avatar: profile.avatarMediaAssetId ? { mediaAssetId: profile.avatarMediaAssetId } : null };
+  }
+
+  async openMyProfile(actor: import('../auth/auth.interface').UserIdentity): Promise<OwnProfileView> {
+    const [profile, user] = await Promise.all([
+      this.dataSource.getRepository(ProfileRecord).findOneBy({ userId: actor.userId }),
+      this.dataSource.getRepository(UserRecord).findOneBy({ id: actor.userId }),
+    ]);
+    if (!profile || !user) throw new UsersBusinessError('PROFILE_NOT_FOUND_OR_NOT_VIEWABLE');
+    return {
+      userId: profile.userId,
+      email: user.email,
+      emailVerified: Boolean(user.emailVerifiedAt),
+      firstName: profile.firstName,
+      lastName: profile.lastName,
+      bio: profile.bio,
+      avatar: profile.avatarMediaAssetId ? { mediaAssetId: profile.avatarMediaAssetId } : null,
+      visibility: profile.visibility,
+      version: profile.version,
+    };
   }
 
   async currentEventCreationQuota(query: import('./users.interface').CurrentEventCreationQuota): Promise<import('./users.interface').QuotaView> {

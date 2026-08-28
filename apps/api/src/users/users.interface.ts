@@ -11,6 +11,8 @@ export type ProfileView = {
 };
 
 export type OwnProfileView = ProfileView & {
+  email: string;
+  emailVerified: boolean;
   visibility: ProfileVisibility;
   version: number;
 };
@@ -29,6 +31,7 @@ export type QuotaView = { periodStart: string; createdCount: number; monthlyEven
 
 export interface UsersModule {
   reviseMyProfile(command: ReviseMyProfile): Promise<OwnProfileView>;
+  openMyProfile(actor: UserIdentity): Promise<OwnProfileView>;
   openProfile(query: OpenProfile): Promise<ProfileView>;
   currentEventCreationQuota(query: CurrentEventCreationQuota): Promise<QuotaView>;
 }

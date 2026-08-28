@@ -13,6 +13,7 @@ export type OwnedMediaAsset = {
 export type MediaCommand =
   | { kind: 'UPLOAD_IMAGE'; actor: MediaIdentity; image: { bytes: Uint8Array; declaredMimeType?: string } }
   | { kind: 'SET_PROFILE_AVATAR'; actor: MediaIdentity; mediaAssetId: string }
+  | { kind: 'CLEAR_PROFILE_AVATAR'; actor: MediaIdentity }
   | { kind: 'ATTACH_EVENT_MEDIA'; actor: MediaIdentity; eventId: string; mediaAssetId: string; role: 'COVER' | 'GALLERY'; altText?: string }
   | { kind: 'DETACH_EVENT_MEDIA'; actor: MediaIdentity; eventMediaId: string }
   | { kind: 'DELETE_MEDIA_ASSET'; actor: MediaIdentity; mediaAssetId: string };
@@ -20,6 +21,7 @@ export type MediaCommand =
 export type MediaOutcome =
   | { kind: 'IMAGE_UPLOADED'; mediaAsset: OwnedMediaAsset }
   | { kind: 'PROFILE_AVATAR_SET'; mediaAssetId: string }
+  | { kind: 'PROFILE_AVATAR_CLEARED' }
   | { kind: 'EVENT_MEDIA_ATTACHED'; eventMediaId: string; eventId: string }
   | { kind: 'EVENT_MEDIA_DETACHED'; eventMediaId: string }
   | { kind: 'MEDIA_ASSET_DELETED'; mediaAssetId: string };
