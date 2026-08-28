@@ -6,7 +6,7 @@ export function createDatabaseOptions(databaseUrl: string): DataSourceOptions {
   return {
     type: 'postgres',
     url: databaseUrl,
-    entities: [join(__dirname, '../**/*.entity{.ts,.js}')],
+    entities: [join(__dirname, '../**/*.{entity,persistence}{.ts,.js}')],
     migrations: [join(__dirname, '../database/migrations/*{.ts,.js}')],
     migrationsTableName: 'migrations',
     migrationsTransactionMode: 'all',

@@ -1,0 +1,17 @@
+export type AuthErrorCode =
+  | 'ACCESS_TOKEN_INVALID'
+  | 'CURRENT_PASSWORD_INCORRECT'
+  | 'EMAIL_ALREADY_REGISTERED'
+  | 'INVALID_CREDENTIALS'
+  | 'PASSWORD_POLICY_VIOLATION'
+  | 'PASSWORD_RESET_TOKEN_INVALID_OR_EXPIRED'
+  | 'REFRESH_SESSION_INVALID'
+  | 'VERIFICATION_TOKEN_INVALID_OR_EXPIRED'
+  | 'VERIFICATION_RESEND_TOO_SOON';
+
+export class AuthBusinessError extends Error {
+  constructor(public readonly code: AuthErrorCode) {
+    super(code);
+    this.name = 'AuthBusinessError';
+  }
+}
