@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { DataSource } from 'typeorm';
 import { UserRecord } from '../auth/auth.persistence';
 import { EventsBusinessError } from './events.errors';
+import { canonicalEventCity } from './event-city';
 import { MessagingImplementation } from '../messaging/messaging.implementation';
 import type { RealtimeModule } from '../realtime/realtime.interface';
 import type {
@@ -308,7 +309,7 @@ export class EventsImplementation implements EventModule {
       timezone: definition.timezone.trim(),
       location: {
         ...definition.location,
-        city: definition.location.city.trim(),
+        city: canonicalEventCity(definition.location.city),
         district: definition.location.district.trim(),
         venueName: definition.location.venueName?.trim() || null,
         address: definition.location.address?.trim() || null,

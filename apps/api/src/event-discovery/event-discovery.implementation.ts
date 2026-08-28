@@ -3,6 +3,7 @@ import { AttendanceRecord, CategoryRecord, EventLocationRecord, EventRecord } fr
 import { EventDiscoveryBusinessError } from './event-discovery.errors';
 import { InvitationRecord } from '../events/events.persistence';
 import { EventMediaRecord, MediaAssetRecord } from '../media/media.persistence';
+import { canonicalEventCity } from '../events/event-city';
 import type { CalendarEventCard, CalendarPage, DiscoverEvents, EventCard, EventDetail, EventDiscoveryModule, EventPage, OpenEvent, PersonalCalendar } from './event-discovery.interface';
 type Cursor = { startsAt: string; id: string; filter: string };
 export class EventDiscoveryImplementation implements EventDiscoveryModule {
@@ -10,7 +11,7 @@ export class EventDiscoveryImplementation implements EventDiscoveryModule {
   async discover(request: DiscoverEvents): Promise<EventPage> {
     const limit = request.limit ?? 20;
     if (!Number.isInteger(limit) || limit < 1 || limit > 50) throw new EventDiscoveryBusinessError('INVALID_PAGE_LIMIT');
-    const city = request.city.trim();
+    const city = canonicalEventCity(request.city);
     if (!city || (request.startsAtFrom && request.startsAtBefore && request.startsAtFrom >= request.startsAtBefore)) throw new EventDiscoveryBusinessError('INVALID_DISCOVERY_FILTER');
     const filter = JSON.stringify({ city, district: request.district?.trim() || null, categoryId: request.categoryId ?? null, from: request.startsAtFrom?.toISOString() ?? null, before: request.startsAtBefore?.toISOString() ?? null });
     const cursor = request.after ? this.decodeCursor(request.after, filter) : undefined;
@@ -49,7 +50,7 @@ export class EventDiscoveryImplementation implements EventDiscoveryModule {
     const card: EventCard = { id: event.id, title: event.title, startsAt: event.startsAt, endsAt: event.endsAt, timezone: event.timezone, status: event.status as EventCard['status'], category: { id: category.id, name: category.name, isActive: category.isActive }, location: { city: location.city, district: location.district, venueName: location.venueName }, capacity: event.capacity === null ? { kind: 'UNLIMITED' } : { kind: 'LIMITED', capacity: event.capacity, confirmedCount: event.confirmedCount, availableSeats: event.capacity - event.confirmedCount }, ...(coverMedia ? { coverMediaAssetId: coverMedia.mediaAssetId } : {}), ...(attendance ? { ownAttendanceStatus: attendance.status } : {}) };
     const galleryMedia = await this.dataSource.getRepository(EventMediaRecord).createQueryBuilder('eventMedia').innerJoin(MediaAssetRecord, 'asset', "asset.id = eventMedia.media_asset_id AND asset.status = 'READY'").select('eventMedia.media_asset_id', 'mediaAssetId').where("eventMedia.event_id = :eventId AND eventMedia.role = 'GALLERY'", { eventId: event.id }).orderBy('eventMedia.position', 'ASC').addOrderBy('eventMedia.id', 'ASC').getRawMany<{ mediaAssetId: string }>();
     const hasJoinEligibility = event.joinPolicy !== 'INVITE_ONLY' || Boolean(invitation);
-    return { ...card, status: event.status, description: event.description, visibility: event.visibility, joinPolicy: event.joinPolicy, location: { ...card.location, address: addressVisible ? location.address : null }, galleryMediaAssetIds: galleryMedia.map((media) => media.mediaAssetId), joinAvailable: event.status === 'PUBLISHED' && event.startsAt > this.now() && Boolean(request.viewer) && hasJoinEligibility && (!attendance || attendance.status === 'CANCELLED' || attendance.status === 'REJECTED') };
+    return { ...card, status: event.status, description: event.description, visibility: event.visibility, joinPolicy: event.joinPolicy, location: { ...card.location, address: addressVisible ? location.address : null }, galleryMediaAssetIds: galleryMedia.map((media) => media.mediaAssetId), canManageMedia: organizer && ['DRAFT', 'PUBLISHED'].includes(event.status) && event.startsAt > this.now(), joinAvailable: event.status === 'PUBLISHED' && event.startsAt > this.now() && Boolean(request.viewer) && hasJoinEligibility && (!attendance || attendance.status === 'CANCELLED' || attendance.status === 'REJECTED') };
   }
   async personalCalendar(request: PersonalCalendar): Promise<CalendarPage> {
     const limit = request.limit ?? 20;
