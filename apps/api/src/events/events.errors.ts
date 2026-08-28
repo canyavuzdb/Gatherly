@@ -1,0 +1,20 @@
+export type EventsErrorCode =
+  | 'ACTOR_NOT_ACTIVE'
+  | 'ACTOR_NOT_VERIFIED'
+  | 'NOT_ORGANIZER'
+  | 'CATEGORY_INACTIVE'
+  | 'CAPACITY_BELOW_CONFIRMED_COUNT'
+  | 'EVENT_CREATION_QUOTA_EXHAUSTED'
+  | 'EVENT_NOT_EDITABLE'
+  | 'EVENT_NOT_PUBLISHABLE'
+  | 'EVENT_NOT_CANCELLABLE'
+  | 'EVENT_VERSION_CONFLICT'
+  | 'INVALID_EVENT_TIMING'
+  | 'INVALID_EVENT_DEFINITION'
+  | 'PRIVATE_EVENT_REQUIRES_INVITE_ONLY';
+
+export class EventsBusinessError extends Error {
+  constructor(readonly code: EventsErrorCode) {
+    super(code);
+  }
+}

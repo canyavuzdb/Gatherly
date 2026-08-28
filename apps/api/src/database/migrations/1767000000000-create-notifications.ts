@@ -1,0 +1,6 @@
+import type { MigrationInterface, QueryRunner } from 'typeorm';
+export class CreateNotifications1767000000000 implements MigrationInterface {
+  name = 'CreateNotifications1767000000000';
+  async up(queryRunner: QueryRunner): Promise<void> { await queryRunner.query("CREATE TYPE notification_type AS ENUM ('ATTENDANCE_REQUESTED','ATTENDANCE_CONFIRMED','ATTENDANCE_REJECTED','ATTENDANCE_WAITLISTED','ATTENDANCE_PROMOTED','INVITATION_RECEIVED','INVITATION_REVOKED','EVENT_REVISED','EVENT_CANCELLED')"); await queryRunner.query("CREATE TABLE notifications (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), recipient_user_id uuid NOT NULL REFERENCES users(id), type notification_type NOT NULL, event_id uuid NOT NULL REFERENCES events(id), title varchar(160) NOT NULL, body varchar(500) NOT NULL, deduplication_key varchar(180) NOT NULL UNIQUE, read_at timestamptz NULL, created_at timestamptz NOT NULL DEFAULT now())"); await queryRunner.query('CREATE INDEX notifications_recipient_created_idx ON notifications(recipient_user_id, created_at DESC, id DESC)'); }
+  async down(queryRunner: QueryRunner): Promise<void> { await queryRunner.query('DROP TABLE notifications'); await queryRunner.query('DROP TYPE notification_type'); }
+}

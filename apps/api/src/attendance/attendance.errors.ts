@@ -1,0 +1,1 @@
+export class AttendanceBusinessError extends Error { constructor(readonly code: 'EVENT_NOT_JOINABLE' | 'ACTOR_NOT_ACTIVE' | 'EVENT_AT_CAPACITY' | 'WAITLIST_UNAVAILABLE' | 'INVALID_ATTENDANCE_TRANSITION' | 'FORBIDDEN') { super(code); } }

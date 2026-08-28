@@ -1,0 +1,2 @@
+export type CommittedFact = { messageId: string; eventName: 'invitation.received.v1' | 'invitation.revoked.v1' | 'attendance.confirmed.v1' | 'attendance.rejected.v1' | 'attendance.waitlisted.v1' | 'attendance.promoted.v1'; eventVersion: 1; occurredAt: Date; correlationId: string; payload: { recipientUserId: string; eventId: string; title: string; body: string } };
+export interface MessagingModule { publish(facts: readonly CommittedFact[]): Promise<void>; }

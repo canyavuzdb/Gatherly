@@ -1,0 +1,1 @@
+export class EventDiscoveryBusinessError extends Error { constructor(readonly code: 'INVALID_DISCOVERY_FILTER' | 'INVALID_DISCOVERY_CURSOR' | 'INVALID_PAGE_LIMIT' | 'EVENT_NOT_FOUND_OR_NOT_VIEWABLE') { super(code); } }

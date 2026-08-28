@@ -1,0 +1,2 @@
+import { Injectable } from '@nestjs/common'; import { NotificationsImplementation } from '../notifications/notifications.implementation'; import type { CommittedFact, MessagingModule } from './messaging.interface';
+@Injectable() export class MessagingImplementation implements MessagingModule { constructor(private readonly notifications: NotificationsImplementation) {} async publish(facts: readonly CommittedFact[]) { for (const fact of facts) await this.notifications.consume(fact); } }
