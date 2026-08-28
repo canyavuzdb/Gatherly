@@ -19,6 +19,9 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+  mailpit:
+    image: axllent/mailpit:v1.28
+    ports: ["8025:8025"]
   api:
     build:
       context: .
@@ -29,10 +32,16 @@ services:
       RABBITMQ_URL: ${RABBITMQ_URL:-amqp://guest:guest@rabbitmq:5672}
       JWT_SECRET: ${JWT_SECRET:-replace-this-before-deployment}
       WEB_ORIGIN: ${WEB_ORIGIN:-http://localhost:3000}
+      SMTP_HOST: ${SMTP_HOST:-mailpit}
+      SMTP_PORT: ${SMTP_PORT:-1025}
+      SMTP_FROM: ${SMTP_FROM:-noreply@gatherly.local}
+      MEDIA_STORAGE_PATH: /app/var/media
     ports: ["3001:3001"]
+    volumes: ["media_data:/app/var/media"]
     depends_on:
       postgres: { condition: service_healthy }
       rabbitmq: { condition: service_healthy }
+      mailpit: { condition: service_started }
   migrate:
     build:
       context: .
@@ -56,3 +65,4 @@ services:
     depends_on: [api]
 volumes:
   postgres_data:
+  media_data:

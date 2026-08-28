@@ -355,7 +355,7 @@ export class AuthImplementation implements AuthModule {
         where: { tokenHash: hashSecret(command.verificationSecret) },
         lock: { mode: 'pessimistic_write' },
       });
-      if (!token || token.usedAt || token.invalidatedAt || token.expiresAt <= now) {
+      if (!token || token.invalidatedAt || token.expiresAt <= now) {
         throw new AuthBusinessError('VERIFICATION_TOKEN_INVALID_OR_EXPIRED');
       }
 
@@ -364,6 +364,13 @@ export class AuthImplementation implements AuthModule {
         lock: { mode: 'pessimistic_write' },
       });
       if (!user || user.status !== 'ACTIVE') {
+        throw new AuthBusinessError('VERIFICATION_TOKEN_INVALID_OR_EXPIRED');
+      }
+
+      if (token.usedAt && user.emailVerifiedAt) {
+        return { userId: user.id, verification: 'VERIFIED' as const };
+      }
+      if (token.usedAt) {
         throw new AuthBusinessError('VERIFICATION_TOKEN_INVALID_OR_EXPIRED');
       }
 

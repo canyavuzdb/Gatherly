@@ -1,6 +1,7 @@
 import { plainToInstance, Type } from 'class-transformer';
 import {
   IsEnum,
+  IsEmail,
   IsInt,
   IsString,
   IsUrl,
@@ -41,6 +42,18 @@ class EnvironmentVariables {
   @IsString()
   @MinLength(16)
   JWT_SECRET!: string;
+
+  @IsString()
+  SMTP_HOST = 'mailpit';
+
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(65535)
+  SMTP_PORT = 1025;
+
+  @IsEmail()
+  SMTP_FROM = 'noreply@gatherly.local';
 }
 
 export function validateEnvironment(config: Record<string, unknown>) {

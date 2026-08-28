@@ -186,6 +186,22 @@ describe('AuthModule registration', () => {
     });
   });
 
+  it('acknowledges a verification secret that has already verified the same active user', async () => {
+    await auth.decide({
+      kind: 'REGISTER',
+      email: 'ada@example.com',
+      password: 'correct-horse-battery-staple',
+      firstName: 'Ada',
+      lastName: 'Lovelace',
+    });
+    const verificationSecret = verificationEmails.at(-1)?.verificationSecret;
+    if (!verificationSecret) throw new Error('Registration did not deliver a verification secret.');
+
+    const first = await auth.decide({ kind: 'VERIFY_EMAIL', verificationSecret });
+
+    await expect(auth.decide({ kind: 'VERIFY_EMAIL', verificationSecret })).resolves.toEqual(first);
+  });
+
   it('replaces the verification secret and enforces the resend cooldown', async () => {
     const registration = asSessionGrant(await auth.decide({
       kind: 'REGISTER',
