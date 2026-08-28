@@ -5,7 +5,14 @@ import { SocketIoAdapter } from './socketio.adapter';
 
 @Module({
   imports: [AuthNestModule],
-  providers: [SocketIoAdapter, RealtimeImplementation],
+  providers: [
+    SocketIoAdapter,
+    {
+      provide: RealtimeImplementation,
+      inject: [SocketIoAdapter],
+      useFactory: (socket: SocketIoAdapter) => new RealtimeImplementation(socket),
+    },
+  ],
   exports: [RealtimeImplementation],
 })
 export class RealtimeNestModule {}
