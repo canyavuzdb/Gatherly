@@ -6,4 +6,5 @@ packages:
 # This package is used by the ESLint resolver.
 allowBuilds:
   '@scarf/scarf': false
+  argon2: true
   unrs-resolver: true

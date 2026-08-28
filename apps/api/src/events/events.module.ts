@@ -3,9 +3,12 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { AuthNestModule } from '../auth/auth.module';
 import { MessagingNestModule } from '../messaging/messaging.module';
 import { MessagingImplementation } from '../messaging/messaging.implementation';
+import { RealtimeImplementation } from '../realtime/realtime.implementation';
+import { RealtimeNestModule } from '../realtime/realtime.module';
 import { DataSource } from 'typeorm';
 import { EventsHttpController } from './events.http';
 import { EventsImplementation } from './events.implementation';
+import { EventCompletionScheduler } from './events.scheduler';
 import {
   AttendanceRecord,
   CategoryRecord,
@@ -16,7 +19,7 @@ import {
 
 @Module({
   imports: [
-    AuthNestModule, MessagingNestModule,
+    AuthNestModule, MessagingNestModule, RealtimeNestModule,
     TypeOrmModule.forFeature([
       CategoryRecord,
       EventRecord,
@@ -26,7 +29,10 @@ import {
     ]),
   ],
   controllers: [EventsHttpController],
-  providers: [{ provide: EventsImplementation, inject: [DataSource, MessagingImplementation], useFactory: (dataSource: DataSource, messaging: MessagingImplementation) => new EventsImplementation(dataSource, {}, messaging) }],
+  providers: [
+    { provide: EventsImplementation, inject: [DataSource, MessagingImplementation, RealtimeImplementation], useFactory: (dataSource: DataSource, messaging: MessagingImplementation, realtime: RealtimeImplementation) => new EventsImplementation(dataSource, {}, messaging, realtime) },
+    { provide: EventCompletionScheduler, inject: [EventsImplementation], useFactory: (events: EventsImplementation) => new EventCompletionScheduler(events) },
+  ],
   exports: [EventsImplementation],
 })
 export class EventsNestModule {}

@@ -3,14 +3,22 @@ import { UserRecord } from '../auth/auth.persistence';
 import { EventRecord, InvitationRecord } from '../events/events.persistence';
 import { InvitationsBusinessError } from './invitations.errors';
 import { MessagingImplementation } from '../messaging/messaging.implementation';
-import type { CreateInvitation, InvitationCommand, InvitationView, InvitationsModule, ListMyPendingInvitations, RevokeInvitation } from './invitations.interface';
+import type { RealtimeModule } from '../realtime/realtime.interface';
+import type { CreateInvitation, InvitationCommand, InvitationView, InvitationsModule, ListEventInvitations, ListMyPendingInvitations, RevokeInvitation } from './invitations.interface';
 
 export class InvitationsImplementation implements InvitationsModule {
-  constructor(private readonly dataSource: DataSource, private readonly messaging?: MessagingImplementation, private readonly now = () => new Date()) {}
+  constructor(private readonly dataSource: DataSource, private readonly messaging?: MessagingImplementation, private readonly now = () => new Date(), private readonly realtime?: RealtimeModule) {}
   async decide(command: InvitationCommand): Promise<InvitationView | InvitationView[]> {
     if (command.kind === 'CREATE_INVITATION') return this.create(command);
     if (command.kind === 'REVOKE_INVITATION') return this.revoke(command);
+    if (command.kind === 'LIST_EVENT_INVITATIONS') return this.listEvent(command);
     return this.listPending(command);
+  }
+  private async listEvent(command: ListEventInvitations): Promise<InvitationView[]> {
+    const event = await this.dataSource.getRepository(EventRecord).findOneBy({ id: command.eventId, organizerId: command.actorUserId });
+    if (!event) throw new InvitationsBusinessError('FORBIDDEN');
+    const invitations = await this.dataSource.getRepository(InvitationRecord).find({ where: { eventId: event.id }, order: { expiresAt: 'ASC', id: 'ASC' } });
+    return invitations.map((invitation) => this.view(invitation));
   }
   private async create(command: CreateInvitation): Promise<InvitationView> {
     const result = await this.dataSource.transaction(async (manager) => {
@@ -27,6 +35,7 @@ export class InvitationsImplementation implements InvitationsModule {
       return this.view(invitation);
     });
     await this.messaging?.publish([{ messageId: `invitation:${result.id}:${result.version}`, eventName: 'invitation.received.v1', eventVersion: 1, occurredAt: this.now(), correlationId: result.id, payload: { recipientUserId: result.recipientUserId, eventId: result.eventId, title: 'New invitation', body: 'You have been invited to an event.' } }]);
+    await this.realtime?.emit({ kind: 'USER_EVENT_CHANGED', recipientUserId: result.recipientUserId, eventId: result.eventId, change: 'INVITATION' });
     return result;
   }
   private async revoke(command: RevokeInvitation): Promise<InvitationView> {
@@ -43,6 +52,7 @@ export class InvitationsImplementation implements InvitationsModule {
       return this.view(await manager.save(invitation));
     });
     await this.messaging?.publish([{ messageId: `invitation:${result.id}:${result.version}`, eventName: 'invitation.revoked.v1', eventVersion: 1, occurredAt: this.now(), correlationId: result.id, payload: { recipientUserId: result.recipientUserId, eventId: result.eventId, title: 'Invitation revoked', body: 'An event invitation was revoked.' } }]);
+    await this.realtime?.emit({ kind: 'USER_EVENT_CHANGED', recipientUserId: result.recipientUserId, eventId: result.eventId, change: 'INVITATION' });
     return result;
   }
   private async listPending(command: ListMyPendingInvitations): Promise<InvitationView[]> {

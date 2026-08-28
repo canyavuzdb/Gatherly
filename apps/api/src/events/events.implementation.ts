@@ -3,6 +3,7 @@ import { DataSource } from 'typeorm';
 import { UserRecord } from '../auth/auth.persistence';
 import { EventsBusinessError } from './events.errors';
 import { MessagingImplementation } from '../messaging/messaging.implementation';
+import type { RealtimeModule } from '../realtime/realtime.interface';
 import type {
   CompleteEventDefinition,
   CompleteDueEvents,
@@ -38,6 +39,7 @@ export class EventsImplementation implements EventModule {
     private readonly dataSource: DataSource,
     dependencies: EventsDependencies = {},
     private readonly messaging?: MessagingImplementation,
+    private readonly realtime?: RealtimeModule,
   ) {
     this.now = dependencies.now ?? (() => new Date());
     this.newShareToken = dependencies.newShareToken ?? randomUUID;
@@ -45,15 +47,17 @@ export class EventsImplementation implements EventModule {
 
   async decide(command: EventCommand): Promise<EventOutcome> {
     if (command.kind === 'CREATE_DRAFT') return this.createDraft(command);
-    if (command.kind === 'PUBLISH_EVENT') return this.publishEvent(command);
-    if (command.kind === 'CANCEL_EVENT') return this.cancelEvent(command);
+    if (command.kind === 'PUBLISH_EVENT') return this.emitPublicChange(await this.publishEvent(command), 'EVENT');
+    if (command.kind === 'CANCEL_EVENT') { const outcome = await this.cancelEvent(command); if (outcome.kind === 'EVENT_CANCELLED') await this.publishEventFact('event.cancelled.v1', outcome.event.id, command.actorUserId, outcome.event.version); return this.emitPublicChange(outcome, 'EVENT'); }
     if (command.kind === 'COMPLETE_DUE_EVENTS') return this.completeDueEvents(command);
-    return this.reviseEvent(command);
+    const outcome = await this.reviseEvent(command); if (outcome.kind === 'EVENT_REVISED') await this.publishEventFact('event.revised.v1', outcome.event.id, command.actorUserId, outcome.event.version); return this.emitPublicChange(outcome, 'EVENT');
   }
+  private async emitPublicChange(outcome: EventOutcome, change: 'EVENT' | 'CAPACITY') { if ('event' in outcome && outcome.event.visibility === 'PUBLIC') await this.realtime?.emit({ kind: 'PUBLIC_EVENT_CHANGED', eventId: outcome.event.id, change }); return outcome; }
+  private async publishEventFact(eventName: 'event.revised.v1' | 'event.cancelled.v1', eventId: string, actorUserId: string, version: number) { if (!this.messaging) return; await this.messaging.publish([{ messageId: `event:${eventId}:${version}`, eventName, eventVersion: 1, occurredAt: this.now(), correlationId: eventId, payload: { recipientUserId: actorUserId, eventId, title: 'Event updated', body: 'An event you attend was updated.' } }]); }
 
   private async completeDueEvents(_command: CompleteDueEvents): Promise<EventOutcome> {
     const now = this.now();
-    return this.dataSource.transaction(async (manager) => {
+    const completed = await this.dataSource.transaction(async (manager) => {
       const dueEvents = await manager.createQueryBuilder(EventRecord, 'event')
         .setLock('pessimistic_write')
         .where('event.status = :status', { status: 'PUBLISHED' })
@@ -66,8 +70,18 @@ export class EventsImplementation implements EventModule {
         event.version += 1;
       }
       if (dueEvents.length) await manager.save(dueEvents);
-      return { kind: 'DUE_EVENTS_COMPLETED', completedEventIds: dueEvents.map((event) => event.id) };
+      return dueEvents;
     });
+    for (const event of completed) {
+      await this.messaging?.publish([{ messageId: `event:${event.id}:${event.version}`, eventName: 'event.completed.v1', eventVersion: 1, occurredAt: now, correlationId: event.id, payload: { recipientUserId: event.organizerId, eventId: event.id, title: 'Event completed', body: 'This event has ended.' } }]);
+      if (event.visibility === 'PUBLIC') {
+        await this.realtime?.emit({ kind: 'PUBLIC_EVENT_CHANGED', eventId: event.id, change: 'EVENT' });
+      } else {
+        const attendees = await this.dataSource.getRepository(AttendanceRecord).find({ where: { eventId: event.id }, select: { userId: true, status: true } });
+        for (const attendee of attendees) if (['CONFIRMED', 'PENDING', 'WAITLISTED'].includes(attendee.status)) await this.realtime?.emit({ kind: 'USER_EVENT_CHANGED', recipientUserId: attendee.userId, eventId: event.id, change: 'EVENT' });
+      }
+    }
+    return { kind: 'DUE_EVENTS_COMPLETED', completedEventIds: completed.map((event) => event.id) };
   }
 
   private async cancelEvent(command: CancelEvent): Promise<EventOutcome> {
@@ -120,7 +134,7 @@ export class EventsImplementation implements EventModule {
 
   private async reviseEvent(command: ReviseEvent): Promise<EventOutcome> {
     const definition = this.normalizeDefinition(command.definition);
-    return this.dataSource.transaction(async (manager) => {
+    const result = await this.dataSource.transaction(async (manager) => {
       const event = await manager.findOne(EventRecord, {
         where: { id: command.eventId },
         lock: { mode: 'pessimistic_write' },
@@ -149,7 +163,17 @@ export class EventsImplementation implements EventModule {
       if (definition.capacity !== null && definition.capacity < event.confirmedCount) {
         throw new EventsBusinessError('CAPACITY_BELOW_CONFIRMED_COUNT');
       }
+      const capacityIncreased = event.joinPolicy === 'OPEN' && (definition.capacity === null || (event.capacity !== null && definition.capacity > event.capacity));
       event.capacity = definition.capacity;
+      const promoted: AttendanceRecord[] = [];
+      if (capacityIncreased) {
+        const waitlisted = await manager.find(AttendanceRecord, { where: { eventId: event.id, status: 'WAITLISTED' }, order: { waitlistedAt: 'ASC', id: 'ASC' }, lock: { mode: 'pessimistic_write' } });
+        for (const attendance of waitlisted) {
+          if (event.capacity !== null && event.confirmedCount >= event.capacity) break;
+          attendance.status = 'CONFIRMED'; attendance.confirmedAt = this.now(); attendance.version += 1; attendance.updatedByUserId = command.actorUserId; attendance.updatedByKind = 'USER';
+          await manager.save(attendance); event.confirmedCount += 1; promoted.push(attendance);
+        }
+      }
       event.visibility = definition.visibility;
       event.joinPolicy = definition.joinPolicy;
       event.version += 1;
@@ -163,8 +187,10 @@ export class EventsImplementation implements EventModule {
       location.version += 1;
       await manager.save(event);
       await manager.save(location);
-      return { ...draftOutcome(event, location), kind: 'EVENT_REVISED' };
+      return { outcome: { ...draftOutcome(event, location), kind: 'EVENT_REVISED' } as EventOutcome, promoted };
     });
+    for (const attendance of result.promoted) await this.messaging?.publish([{ messageId: `attendance:${attendance.id}:${attendance.version}`, eventName: 'attendance.promoted.v1', eventVersion: 1, occurredAt: this.now(), correlationId: attendance.id, payload: { recipientUserId: attendance.userId, eventId: command.eventId, title: 'You are in!', body: 'A place opened up and your attendance was confirmed.' } }]);
+    return result.outcome;
   }
 
   private async createDraft(command: CreateDraft): Promise<EventOutcome> {

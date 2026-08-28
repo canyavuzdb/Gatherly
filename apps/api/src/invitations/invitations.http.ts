@@ -26,6 +26,10 @@ export class InvitationsHttpController {
   async listMine(@Headers('authorization') authorization: string | undefined) {
     return this.withActor(authorization, (actorUserId) => this.invitations.decide({ kind: 'LIST_MY_PENDING_INVITATIONS', actorUserId }));
   }
+  @Get('events/:eventId/invitations')
+  async listEvent(@Headers('authorization') authorization: string | undefined, @Param('eventId') eventId: string) {
+    return this.withActor(authorization, (actorUserId) => this.invitations.decide({ kind: 'LIST_EVENT_INVITATIONS', eventId, actorUserId }));
+  }
   private async withActor<T>(authorization: string | undefined, operation: (actorUserId: string) => Promise<T>): Promise<T> {
     const token = /^Bearer (.+)$/.exec(authorization ?? '')?.[1];
     if (!token) throw new UnauthorizedException('ACCESS_TOKEN_INVALID');

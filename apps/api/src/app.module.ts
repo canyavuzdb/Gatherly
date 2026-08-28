@@ -12,7 +12,9 @@ import { EventDiscoveryNestModule } from './event-discovery/event-discovery.modu
 import { InvitationsNestModule } from './invitations/invitations.module';
 import { NotificationsNestModule } from './notifications/notifications.module';
 import { MessagingNestModule } from './messaging/messaging.module';
+import { MediaNestModule } from './media/media.module';
 import { UsersNestModule } from './users/users.module';
+import { RealtimeNestModule } from './realtime/realtime.module';
 
 @Module({
   imports: [
@@ -38,7 +40,9 @@ import { UsersNestModule } from './users/users.module';
     EventDiscoveryNestModule,
     InvitationsNestModule,
     NotificationsNestModule,
+    RealtimeNestModule,
     MessagingNestModule,
+    MediaNestModule,
     AttendanceNestModule,
   ],
   controllers: [AppController],

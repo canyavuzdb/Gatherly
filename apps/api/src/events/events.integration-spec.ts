@@ -196,6 +196,93 @@ describe('EventModule draft creation', () => {
     });
   });
 
+  it('promotes waitlisted attendees in FIFO order when an open event capacity increases', async () => {
+    const organizerGrant = asSessionGrant(await auth.decide({
+      kind: 'REGISTER', email: 'organizer-capacity@example.com', password: 'correct-horse-battery-staple', firstName: 'Linus', lastName: 'Torvalds',
+    }));
+    const organizerSecret = verificationEmails.at(-1)?.verificationSecret;
+    if (!organizerSecret) throw new Error('Expected organizer verification email.');
+    const organizer = await auth.decide({ kind: 'VERIFY_EMAIL', verificationSecret: organizerSecret });
+    if (organizer.kind !== 'EMAIL_VERIFIED') throw new Error('Expected verified organizer.');
+
+    const guestGrant = asSessionGrant(await auth.decide({
+      kind: 'REGISTER', email: 'waitlisted-capacity@example.com', password: 'correct-horse-battery-staple', firstName: 'Margaret', lastName: 'Hamilton',
+    }));
+    const guestSecret = verificationEmails.at(-1)?.verificationSecret;
+    if (!guestSecret) throw new Error('Expected guest verification email.');
+    const guest = await auth.decide({ kind: 'VERIFY_EMAIL', verificationSecret: guestSecret });
+    if (guest.kind !== 'EMAIL_VERIFIED') throw new Error('Expected verified guest.');
+
+    expect(organizerGrant.identity.userId).toBe(organizer.identity.userId);
+    expect(guestGrant.identity.userId).toBe(guest.identity.userId);
+
+    const categoryId = randomUUID();
+    const eventId = randomUUID();
+    const definition = {
+      categoryId, title: 'Capacity expansion meetup', description: 'A small meetup that grows.',
+      startsAt: new Date('2026-09-10T18:00:00.000Z'), endsAt: new Date('2026-09-10T20:00:00.000Z'),
+      timezone: 'Europe/Istanbul', capacity: 1, visibility: 'PUBLIC' as const, joinPolicy: 'OPEN' as const,
+      location: { city: 'Istanbul', district: 'Kadikoy', venueName: null, address: null, addressVisibility: 'EVENT_VIEWERS' as const },
+    };
+    await dataSource.query(
+      `INSERT INTO categories (id, name, slug, is_active, sort_order, created_at, updated_at, updated_by_kind, version)
+       VALUES ($1, 'Capacity', 'capacity', true, 0, now(), now(), 'SYSTEM', 1)`,
+      [categoryId],
+    );
+    await events.decide({ kind: 'CREATE_DRAFT', eventId, actorUserId: organizer.identity.userId, definition });
+    await events.decide({ kind: 'PUBLISH_EVENT', eventId, actorUserId: organizer.identity.userId, expectedVersion: 1 });
+    const attendanceId = randomUUID();
+    await dataSource.query(
+      `INSERT INTO attendances (id, event_id, user_id, status, waitlist_opt_in, requested_at, waitlisted_at, confirmed_at, updated_by_user_id, updated_by_kind, version)
+       VALUES ($1, $2, $3, 'WAITLISTED', true, '2026-08-28T12:00:00Z', '2026-08-28T12:01:00Z', NULL, $3, 'USER', 1)`,
+      [attendanceId, eventId, guest.identity.userId],
+    );
+
+    await expect(events.decide({
+      kind: 'REVISE_EVENT', eventId, actorUserId: organizer.identity.userId, expectedVersion: 2,
+      definition: { ...definition, capacity: 2 },
+    })).resolves.toMatchObject({
+      kind: 'EVENT_REVISED', event: { id: eventId, capacity: 2, confirmedCount: 2, version: 3 },
+    });
+    await expect(dataSource.query(
+      'SELECT status, confirmed_at, version FROM attendances WHERE id = $1', [attendanceId],
+    )).resolves.toEqual([{ status: 'CONFIRMED', confirmed_at: new Date('2026-08-28T12:00:00.000Z'), version: 2 }]);
+  });
+
+  it('distributes completed public events without creating a notification fact', async () => {
+    const grant = asSessionGrant(await auth.decide({
+      kind: 'REGISTER', email: 'completion-organizer@example.com', password: 'correct-horse-battery-staple', firstName: 'Barbara', lastName: 'Liskov',
+    }));
+    const secret = verificationEmails.at(-1)?.verificationSecret;
+    if (!secret) throw new Error('Expected verification email.');
+    const verified = await auth.decide({ kind: 'VERIFY_EMAIL', verificationSecret: secret });
+    if (verified.kind !== 'EMAIL_VERIFIED') throw new Error('Expected verified organizer.');
+    const categoryId = randomUUID();
+    const eventId = randomUUID();
+    await dataSource.query(`INSERT INTO categories (id, name, slug, is_active, sort_order, created_at, updated_at, updated_by_kind, version) VALUES ($1, 'Completion', 'completion', true, 0, now(), now(), 'SYSTEM', 1)`, [categoryId]);
+    const definition = {
+      categoryId, title: 'Completion event', description: 'Completes on schedule.', startsAt: new Date('2026-09-10T18:00:00.000Z'), endsAt: new Date('2026-09-10T20:00:00.000Z'), timezone: 'Europe/Istanbul', capacity: 5, visibility: 'PUBLIC' as const, joinPolicy: 'OPEN' as const,
+      location: { city: 'Istanbul', district: 'Kadikoy', venueName: null, address: null, addressVisibility: 'EVENT_VIEWERS' as const },
+    };
+    await events.decide({ kind: 'CREATE_DRAFT', eventId, actorUserId: verified.identity.userId, definition });
+    await events.decide({ kind: 'PUBLISH_EVENT', eventId, actorUserId: verified.identity.userId, expectedVersion: 1 });
+    await dataSource.query("UPDATE events SET starts_at = '2026-08-28T10:00:00.000Z', ends_at = '2026-08-28T11:00:00.000Z' WHERE id = $1", [eventId]);
+    const published: unknown[] = [];
+    const realtime = { emit: jest.fn().mockResolvedValue(undefined) };
+    const completionEvents = new EventsImplementation(
+      dataSource,
+      { now: () => new Date('2026-08-28T12:00:00.000Z') },
+      { publish: jest.fn().mockImplementation(async (facts: unknown[]) => { published.push(...facts); }) } as never,
+      realtime as never,
+    );
+
+    await expect(completionEvents.decide({ kind: 'COMPLETE_DUE_EVENTS' })).resolves.toEqual({ kind: 'DUE_EVENTS_COMPLETED', completedEventIds: [eventId] });
+
+    expect(published).toContainEqual(expect.objectContaining({ eventName: 'event.completed.v1', payload: expect.objectContaining({ eventId }) }));
+    expect(realtime.emit).toHaveBeenCalledWith({ kind: 'PUBLIC_EVENT_CHANGED', eventId, change: 'EVENT' });
+    expect(grant.identity.userId).toBe(verified.identity.userId);
+  });
+
   it('rejects an overlong timezone as an invalid event definition', async () => {
     const registration = asSessionGrant(await auth.decide({ kind: 'REGISTER', email: 'grace@example.com', password: 'correct-horse-battery-staple', firstName: 'Grace', lastName: 'Hopper' }));
     const verificationSecret = verificationEmails.at(-1)?.verificationSecret;

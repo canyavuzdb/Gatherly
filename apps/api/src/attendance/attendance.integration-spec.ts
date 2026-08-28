@@ -2,13 +2,16 @@ import { DataSource } from 'typeorm';
 import { createDatabaseOptions } from '../config/database.config';
 import { AttendanceImplementation } from './attendance.implementation';
 import type { AttendanceModule } from './attendance.interface';
+import { MessagingImplementation } from '../messaging/messaging.implementation';
+import type { CommittedFact } from '../messaging/messaging.interface';
 
 describe('AttendanceModule request', () => {
   let dataSource: DataSource;
   let attendance: AttendanceModule;
-  beforeAll(async () => { dataSource = new DataSource(createDatabaseOptions(process.env.DATABASE_URL ?? '')); await dataSource.initialize(); await dataSource.runMigrations(); attendance = new AttendanceImplementation(dataSource, () => new Date('2026-08-28T12:00:00.000Z')); });
+  let publishedFacts: CommittedFact[];
+  beforeAll(async () => { dataSource = new DataSource(createDatabaseOptions(process.env.DATABASE_URL ?? '')); await dataSource.initialize(); await dataSource.runMigrations(); attendance = new AttendanceImplementation(dataSource, () => new Date('2026-08-28T12:00:00.000Z'), { publish: async (facts: readonly CommittedFact[]) => { publishedFacts.push(...facts); } } as unknown as MessagingImplementation); });
   afterAll(async () => dataSource.destroy());
-  beforeEach(async () => { await dataSource.query('TRUNCATE invitations, attendances, event_locations, events, event_creation_quota_usage, categories, refresh_sessions, email_verification_tokens, password_reset_tokens, profiles, users CASCADE'); });
+  beforeEach(async () => { publishedFacts = []; await dataSource.query('TRUNCATE invitations, attendances, event_locations, events, event_creation_quota_usage, categories, refresh_sessions, email_verification_tokens, password_reset_tokens, profiles, users CASCADE'); });
   it('confirms an RSVP and consumes one capacity seat', async () => {
     const [organizer, guest, secondGuest, category, event] = ['11111111-1111-4111-8111-111111111111','22222222-2222-4222-8222-222222222222','55555555-5555-4555-8555-555555555555','33333333-3333-4333-8333-333333333333','44444444-4444-4444-8444-444444444444'];
     await dataSource.query("INSERT INTO users (id,email,password_hash,email_verified_at,status) VALUES ($1,'organizer@example.test','x',now(),'ACTIVE'),($2,'guest@example.test','x',now(),'ACTIVE'),($3,'second-guest@example.test','x',now(),'ACTIVE')", [organizer, guest, secondGuest]);
@@ -18,6 +21,7 @@ describe('AttendanceModule request', () => {
     await expect(attendance.decide({ kind: 'REQUEST_ATTENDANCE', eventId: event, actorUserId: secondGuest, waitlistOptIn: true })).rejects.toMatchObject({ code: 'EVENT_AT_CAPACITY' });
     await expect(attendance.decide({ kind: 'ENROLL_WAITLIST', eventId: event, actorUserId: secondGuest })).resolves.toMatchObject({ attendance: { userId: secondGuest, status: 'WAITLISTED' }, capacity: { confirmedCount: 2, availableCount: 0 } });
     await expect(attendance.decide({ kind: 'CANCEL_ATTENDANCE', eventId: event, actorUserId: guest })).resolves.toMatchObject({ attendance: { userId: guest, status: 'CANCELLED' }, capacity: { confirmedCount: 2, availableCount: 0 } });
+    expect(publishedFacts).toEqual([expect.objectContaining({ eventName: 'attendance.promoted.v1', payload: expect.objectContaining({ recipientUserId: secondGuest, eventId: event }) })]);
     await expect(attendance.decide({ kind: 'CANCEL_ATTENDANCE', eventId: event, actorUserId: guest })).resolves.toMatchObject({ attendance: { userId: guest, status: 'CANCELLED' }, capacity: { confirmedCount: 2, availableCount: 0 } });
   });
   it('creates a pending RSVP for an Approval Required event without consuming capacity', async () => {
@@ -27,6 +31,7 @@ describe('AttendanceModule request', () => {
     await dataSource.query("INSERT INTO events (id,organizer_id,category_id,title,description,starts_at,ends_at,timezone,capacity,confirmed_count,visibility,join_policy,status,created_by_user_id,updated_by_kind) VALUES ($1,$2,$3,'Workshop','Talks','2026-09-01T18:00:00Z','2026-09-01T20:00:00Z','Europe/Istanbul',2,1,'PUBLIC','APPROVAL_REQUIRED','PUBLISHED',$2,'USER')", [event, organizer, category]);
     const pending = await attendance.decide({ kind: 'REQUEST_ATTENDANCE', eventId: event, actorUserId: guest, waitlistOptIn: true });
     expect(pending).toMatchObject({ attendance: { userId: guest, status: 'PENDING' }, capacity: { confirmedCount: 1, availableCount: 1 } });
+    expect(publishedFacts).toEqual([expect.objectContaining({ eventName: 'attendance.pending.v1', payload: expect.objectContaining({ recipientUserId: organizer, eventId: event }) })]);
     await expect(attendance.decide({ kind: 'DECIDE_ATTENDANCE', eventId: event, attendanceId: pending.attendance.id, actorUserId: organizer, decision: 'CONFIRM' })).resolves.toMatchObject({ attendance: { userId: guest, status: 'CONFIRMED' }, capacity: { confirmedCount: 2, availableCount: 0 } });
     const rejected = await attendance.decide({ kind: 'REQUEST_ATTENDANCE', eventId: event, actorUserId: rejectedGuest, waitlistOptIn: false });
     await expect(attendance.decide({ kind: 'DECIDE_ATTENDANCE', eventId: event, attendanceId: rejected.attendance.id, actorUserId: organizer, decision: 'CONFIRM' })).rejects.toMatchObject({ code: 'EVENT_AT_CAPACITY' });
@@ -53,6 +58,7 @@ describe('AttendanceModule request', () => {
     await dataSource.query("INSERT INTO events (id,organizer_id,category_id,title,description,starts_at,ends_at,timezone,capacity,confirmed_count,visibility,join_policy,status,created_by_user_id,updated_by_kind) VALUES ($1,$2,$3,'Screening','Film','2026-09-01T18:00:00Z','2026-09-01T20:00:00Z','Europe/Istanbul',2,1,'PUBLIC','APPROVAL_REQUIRED','PUBLISHED',$2,'USER')", [event,organizer,category]);
     await dataSource.query("INSERT INTO invitations (id,event_id,recipient_user_id,invited_by_user_id,status,expires_at,updated_by_kind) VALUES ($1,$2,$3,$4,'PENDING','2026-09-02T00:00:00Z','USER')", [invitation,event,guest,organizer]);
     await expect(attendance.decide({ kind: 'ACCEPT_INVITATION', invitationId: invitation, actorUserId: guest, ifFull: 'REJECT' })).resolves.toMatchObject({ attendance: { userId: guest, status: 'PENDING' }, capacity: { confirmedCount: 1, availableCount: 1 } });
+    expect(publishedFacts).toEqual([expect.objectContaining({ eventName: 'attendance.pending.v1', payload: expect.objectContaining({ recipientUserId: organizer, eventId: event }) })]);
   });
   it('accepts a valid invitation into an Invite Only event', async () => {
     const [organizer, guest, category, event, invitation] = ['dededede-dede-4ede-8ede-dededededede','efefefef-efef-4fef-8fef-efefefefefef','10101010-1010-4010-8010-101010101010','20202020-2020-4020-8020-202020202020','30303030-3030-4030-8030-303030303030'];

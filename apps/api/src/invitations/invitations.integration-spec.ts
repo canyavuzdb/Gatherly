@@ -20,6 +20,8 @@ describe('InvitationsModule', () => {
     await expect(invitations.decide({ kind: 'REVOKE_INVITATION', invitationId: firstId, actorUserId: organizer })).resolves.toMatchObject({ id: firstId, status: 'REVOKED' });
     const renewed = await invitations.decide({ kind: 'CREATE_INVITATION', invitationId: secondId, eventId: event, actorUserId: organizer, recipientUserId: recipient, expiresAt: new Date('2026-09-03T00:00:00Z') });
     expect(renewed).toMatchObject({ id: firstId, status: 'PENDING', version: 3 });
+    await expect(invitations.decide({ kind: 'LIST_EVENT_INVITATIONS', eventId: event, actorUserId: organizer })).resolves.toMatchObject([{ id: firstId, recipientUserId: recipient, status: 'PENDING' }]);
+    await expect(invitations.decide({ kind: 'LIST_EVENT_INVITATIONS', eventId: event, actorUserId: recipient })).rejects.toMatchObject({ code: 'FORBIDDEN' });
     const count = await dataSource.query('SELECT count(*)::int AS count FROM invitations WHERE event_id = $1 AND recipient_user_id = $2', [event, recipient]);
     expect(count[0].count).toBe(1);
   });
