@@ -24,7 +24,6 @@ export default function ForgotPasswordPage() {
   }
 
   return <main className="auth-page">
-    <div className="auth-brand"><div className="wordmark" aria-label="Gatherly"><span className="wordmark-mark">••</span>Gatherly</div></div>
     <section className="auth-stage" aria-labelledby="forgot-password-title"><div className="auth-card">
       <p className="auth-eyebrow">Şifre sıfırlama</p><h1 className="auth-title" id="forgot-password-title">Hesabına yeniden eriş.</h1>
       <p className="auth-description">E-posta adresini gir. Kayıtlı bir hesabın varsa sıfırlama bağlantısını göndeririz.</p>
