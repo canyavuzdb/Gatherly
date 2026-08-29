@@ -185,6 +185,13 @@ textarea {
 .secondary-button { min-height: 42px; border: 1px solid var(--line); border-radius: 8px; background: transparent; color: var(--ink); font: inherit; font-size: 13px; font-weight: 650; cursor: pointer; transition: background 150ms ease, border-color 150ms ease; }
 .secondary-button:hover { border-color: var(--ink); background: rgba(24, 24, 24, .04); }
 .secondary-button:disabled { cursor: wait; opacity: .6; }
+.attendance-choice-group { display: inline-flex; overflow: hidden; border: 1px solid var(--line); border-radius: 9px; background: rgba(255, 255, 255, .58); }
+.attendance-choice { min-height: 39px; padding: 0 14px; border: 0; border-right: 1px solid var(--line); background: transparent; color: var(--muted); font: inherit; font-size: 12px; font-weight: 650; cursor: pointer; transition: background 150ms ease, color 150ms ease; }
+.attendance-choice:last-child { border-right: 0; }
+.attendance-choice:not(:disabled):hover { background: rgba(24, 24, 24, .05); color: var(--ink); }
+.attendance-choice.is-active, .attendance-choice.is-action { background: var(--ink); color: white; }
+.attendance-choice.is-muted { display: inline-flex; align-items: center; border-right: 0; cursor: default; }
+.attendance-choice:disabled { cursor: default; opacity: 1; }
 .calendar-stage { width: min(100% - 48px, 820px); margin: 0 auto; padding: 64px 0 96px; }
 .dashboard-stage { width: min(100% - 48px, 820px); margin: 0 auto; padding: 64px 0 96px; }
 .dashboard-title { margin: 0 0 34px; font-size: clamp(36px, 5vw, 56px); font-weight: 540; letter-spacing: -0.07em; }

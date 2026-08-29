@@ -13,6 +13,7 @@ type EventDetail = {
   timezone: string;
   status: 'DRAFT' | 'PUBLISHED' | 'CANCELLED' | 'COMPLETED';
   joinPolicy: 'OPEN' | 'APPROVAL_REQUIRED' | 'INVITE_ONLY';
+  invitationId?: string;
   joinAvailable: boolean;
   ownAttendanceStatus?: 'CONFIRMED' | 'PENDING' | 'WAITLISTED' | 'REJECTED' | 'CANCELLED';
   coverMediaAssetId?: string;
@@ -60,16 +61,19 @@ export default function EventDetailPage() {
     setNotice('');
     try {
       const isFull = event.capacity.kind === 'LIMITED' && event.capacity.availableSeats === 0;
-      const response = await fetch(`${apiUrl}/api/v1/events/${event.id}${isFull ? '/waitlist' : '/rsvp'}`, {
+      const requestPath = event.invitationId
+        ? `/api/v1/invitations/${event.invitationId}/accept`
+        : `/api/v1/events/${event.id}${isFull ? '/waitlist' : '/rsvp'}`;
+      const response = await fetch(`${apiUrl}${requestPath}`, {
         method: 'POST',
         headers: { authorization: `Bearer ${accessToken}`, 'content-type': 'application/json' },
-        body: isFull ? undefined : JSON.stringify({ waitlistOptIn: true }),
+        body: event.invitationId ? JSON.stringify({ ifFull: 'JOIN_WAITLIST' }) : isFull ? undefined : JSON.stringify({ waitlistOptIn: true }),
       });
       if (!response.ok) {
         const payload = await response.json().catch(() => null) as { message?: string } | null;
         throw new Error(payload?.message ?? 'Katılım isteği tamamlanamadı.');
       }
-      setNotice(isFull ? 'Bekleme listesine eklendin.' : 'Katılım isteğin alındı.');
+      setNotice(isFull ? 'Bekleme listesine eklendin.' : event.invitationId ? 'Daveti kabul ettin.' : 'Katılım isteğin alındı.');
       await load();
     } catch (error) {
       setNotice(error instanceof Error ? error.message : 'Katılım isteği tamamlanamadı.');
@@ -147,7 +151,7 @@ export default function EventDetailPage() {
       </dl>
       {event.galleryMediaAssetIds.length > 0 && <section className="event-detail-gallery" aria-label="Etkinlik görselleri">{event.galleryMediaAssetIds.map((mediaAssetId, index) => <img src={mediaUrl(mediaAssetId)} alt={`${event.title} görseli ${index + 1}`} onError={(image) => { image.currentTarget.style.display = 'none'; }} key={mediaAssetId} />)}</section>}
       {event.canManageMedia && <section className="event-media-manager"><strong>Etkinlik görselleri</strong><span>Kapak görselini değiştirebilir veya galeriye en fazla 5 görsel ekleyebilirsin.</span><div><label><span>Kapak değiştir</span><input type="file" accept="image/jpeg,image/png,image/webp" disabled={isUploadingMedia} onChange={(input) => void uploadMedia(input.target.files, 'COVER')} /></label><label><span>Galeriye ekle</span><input type="file" accept="image/jpeg,image/png,image/webp" multiple disabled={isUploadingMedia} onChange={(input) => void uploadMedia(input.target.files, 'GALLERY')} /></label></div>{isUploadingMedia && <em>Görseller güncelleniyor…</em>}</section>}
-      {event.ownAttendanceStatus ? <section className="attendance-state"><p className="form-note">Katılım durumun: {attendanceStatusLabel(event.ownAttendanceStatus)}</p>{['CONFIRMED', 'PENDING', 'WAITLISTED'].includes(event.ownAttendanceStatus) && <button className="secondary-button detail-action" type="button" onClick={() => void cancelAttendance()} disabled={isSubmitting}>{isSubmitting ? 'İşleniyor…' : 'Katılımı iptal et'}</button>}</section> : event.joinAvailable && <button className="primary-button detail-action" type="button" onClick={() => void rsvp()} disabled={isSubmitting}>{isSubmitting ? 'İşleniyor…' : event.capacity.kind === 'LIMITED' && event.capacity.availableSeats === 0 ? 'Bekleme listesine katıl' : 'Katıl'}</button>}
+      {event.ownAttendanceStatus ? <section className="attendance-state" aria-label="Katılım yanıtın"><p className="form-note">Katılım yanıtın</p><div className="attendance-choice-group"><button className={event.ownAttendanceStatus === 'CONFIRMED' ? 'attendance-choice is-active' : 'attendance-choice'} type="button" disabled>{event.ownAttendanceStatus === 'CONFIRMED' ? 'Katılıyorum' : attendanceStatusLabel(event.ownAttendanceStatus)}</button>{['CONFIRMED', 'PENDING', 'WAITLISTED'].includes(event.ownAttendanceStatus) && <button className="attendance-choice" type="button" onClick={() => void cancelAttendance()} disabled={isSubmitting}>{isSubmitting ? 'İşleniyor…' : 'Katılmıyorum'}</button>}</div></section> : event.joinAvailable && <section className="attendance-state" aria-label="Katılım yanıtın"><p className="form-note">Katılım yanıtın</p><div className="attendance-choice-group"><button className="attendance-choice is-action" type="button" onClick={() => void rsvp()} disabled={isSubmitting}>{isSubmitting ? 'İşleniyor…' : event.capacity.kind === 'LIMITED' && event.capacity.availableSeats === 0 ? 'Bekleme listesine katıl' : 'Katılıyorum'}</button><span className="attendance-choice is-muted">Henüz yanıt vermedin</span></div></section>}
       {notice && <p className="form-note" role="status">{notice}</p>}
     </article>
   </AppSidebar>;

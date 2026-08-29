@@ -1,4 +1,4 @@
-import { DataSource } from 'typeorm';
+import { DataSource, In } from 'typeorm';
 import { UserRecord } from '../auth/auth.persistence';
 import { EventRecord, InvitationRecord } from '../events/events.persistence';
 import { InvitationsBusinessError } from './invitations.errors';
@@ -18,7 +18,7 @@ export class InvitationsImplementation implements InvitationsModule {
     const event = await this.dataSource.getRepository(EventRecord).findOneBy({ id: command.eventId, organizerId: command.actorUserId });
     if (!event) throw new InvitationsBusinessError('FORBIDDEN');
     const invitations = await this.dataSource.getRepository(InvitationRecord).find({ where: { eventId: event.id }, order: { expiresAt: 'ASC', id: 'ASC' } });
-    return invitations.map((invitation) => this.view(invitation));
+    return invitations.map((invitation) => this.view(invitation, event));
   }
   private async create(command: CreateInvitation): Promise<InvitationView> {
     const result = await this.dataSource.transaction(async (manager) => {
@@ -32,7 +32,7 @@ export class InvitationsImplementation implements InvitationsModule {
       const invitation = existing
         ? await manager.save(Object.assign(existing, { status: 'PENDING', expiresAt: command.expiresAt, acceptedAt: null, revokedAt: null, invitedByUserId: actor.id, updatedByUserId: actor.id, updatedByKind: 'USER', version: existing.version + 1 }))
         : await manager.save(manager.create(InvitationRecord, { id: command.invitationId, eventId: event.id, recipientUserId: recipient.id, invitedByUserId: actor.id, status: 'PENDING', expiresAt: command.expiresAt, acceptedAt: null, revokedAt: null, updatedByUserId: actor.id, updatedByKind: 'USER', version: 1 }));
-      return this.view(invitation);
+      return this.view(invitation, event);
     });
     await this.messaging?.publish([{ messageId: `invitation:${result.id}:${result.version}`, eventName: 'invitation.received.v1', eventVersion: 1, occurredAt: this.now(), correlationId: result.id, payload: { recipientUserId: result.recipientUserId, eventId: result.eventId, title: 'New invitation', body: 'You have been invited to an event.' } }]);
     await this.realtime?.emit({ kind: 'USER_EVENT_CHANGED', recipientUserId: result.recipientUserId, eventId: result.eventId, change: 'INVITATION' });
@@ -46,10 +46,10 @@ export class InvitationsImplementation implements InvitationsModule {
       const invitation = await manager.findOne(InvitationRecord, { where: { id: found.id }, lock: { mode: 'pessimistic_write' } });
       if (!event || !invitation) throw new InvitationsBusinessError('INVITATION_NOT_FOUND');
       if (event.organizerId !== command.actorUserId) throw new InvitationsBusinessError('FORBIDDEN');
-      if (invitation.status === 'REVOKED') return this.view(invitation);
+      if (invitation.status === 'REVOKED') return this.view(invitation, event);
       if (invitation.status !== 'PENDING') throw new InvitationsBusinessError('INVITATION_NOT_REVOCABLE');
       invitation.status = 'REVOKED'; invitation.revokedAt = this.now(); invitation.updatedByUserId = command.actorUserId; invitation.updatedByKind = 'USER'; invitation.version += 1;
-      return this.view(await manager.save(invitation));
+      return this.view(await manager.save(invitation), event);
     });
     await this.messaging?.publish([{ messageId: `invitation:${result.id}:${result.version}`, eventName: 'invitation.revoked.v1', eventVersion: 1, occurredAt: this.now(), correlationId: result.id, payload: { recipientUserId: result.recipientUserId, eventId: result.eventId, title: 'Invitation revoked', body: 'An event invitation was revoked.' } }]);
     await this.realtime?.emit({ kind: 'USER_EVENT_CHANGED', recipientUserId: result.recipientUserId, eventId: result.eventId, change: 'INVITATION' });
@@ -58,8 +58,10 @@ export class InvitationsImplementation implements InvitationsModule {
   private async listPending(command: ListMyPendingInvitations): Promise<InvitationView[]> {
     const user = await this.dataSource.getRepository(UserRecord).findOneBy({ id: command.actorUserId });
     if (!user || user.status !== 'ACTIVE' || !user.emailVerifiedAt) throw new InvitationsBusinessError('ACTOR_NOT_ACTIVE');
-    const pending = await this.dataSource.getRepository(InvitationRecord).find({ where: { recipientUserId: user.id, status: 'PENDING' }, order: { expiresAt: 'ASC', id: 'ASC' } });
-    return pending.filter((invitation) => invitation.expiresAt > this.now()).map((invitation) => this.view(invitation));
+    const pending = (await this.dataSource.getRepository(InvitationRecord).find({ where: { recipientUserId: user.id, status: 'PENDING' }, order: { expiresAt: 'ASC', id: 'ASC' } })).filter((invitation) => invitation.expiresAt > this.now());
+    const events = pending.length ? await this.dataSource.getRepository(EventRecord).findBy({ id: In(pending.map((invitation) => invitation.eventId)) }) : [];
+    const eventsById = new Map(events.map((event) => [event.id, event]));
+    return pending.map((invitation) => this.view(invitation, eventsById.get(invitation.eventId)));
   }
-  private view(invitation: InvitationRecord): InvitationView { return { id: invitation.id, eventId: invitation.eventId, recipientUserId: invitation.recipientUserId, status: invitation.status, expiresAt: invitation.expiresAt, version: invitation.version }; }
+  private view(invitation: InvitationRecord, event?: EventRecord): InvitationView { return { id: invitation.id, eventId: invitation.eventId, recipientUserId: invitation.recipientUserId, status: invitation.status, expiresAt: invitation.expiresAt, version: invitation.version, ...(event ? { event: { title: event.title, startsAt: event.startsAt } } : {}) }; }
 }
