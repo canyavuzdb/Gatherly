@@ -1,6 +1,6 @@
 import type { UserIdentity } from '../auth/auth.interface';
 export type Viewer = UserIdentity | null;
-export type DiscoverEvents = { viewer: Viewer; city: string; district?: string; categoryId?: string; startsAtFrom?: Date; startsAtBefore?: Date; after?: string; limit?: number };
+export type DiscoverEvents = { viewer: Viewer; city: string; scope?: 'UPCOMING' | 'PAST'; district?: string; categoryId?: string; startsAtFrom?: Date; startsAtBefore?: Date; after?: string; limit?: number };
 export type CapacityView = { kind: 'UNLIMITED' } | { kind: 'LIMITED'; capacity: number; confirmedCount: number; availableSeats: number };
 export type EventCard = { id: string; title: string; startsAt: Date; endsAt: Date; timezone: string; status: 'PUBLISHED' | 'CANCELLED' | 'COMPLETED'; category: { id: string; name: string; isActive: boolean }; location: { city: string; district: string; venueName: string | null }; capacity: CapacityView; coverMediaAssetId?: string; ownAttendanceStatus?: 'PENDING' | 'CONFIRMED' | 'WAITLISTED' | 'REJECTED' | 'CANCELLED' };
 export type EventPage = { items: EventCard[]; nextCursor?: string; activeCategories: Array<{ id: string; name: string }> };

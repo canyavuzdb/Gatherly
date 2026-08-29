@@ -12,23 +12,24 @@ export class EventDiscoveryImplementation implements EventDiscoveryModule {
   async discover(request: DiscoverEvents): Promise<EventPage> {
     const limit = request.limit ?? 20;
     if (!Number.isInteger(limit) || limit < 1 || limit > 50) throw new EventDiscoveryBusinessError('INVALID_PAGE_LIMIT');
+    const scope = request.scope ?? 'UPCOMING';
     const city = canonicalEventCity(request.city);
     if (!city || (request.startsAtFrom && request.startsAtBefore && request.startsAtFrom >= request.startsAtBefore)) throw new EventDiscoveryBusinessError('INVALID_DISCOVERY_FILTER');
-    const filter = JSON.stringify({ city, district: request.district?.trim() || null, categoryId: request.categoryId ?? null, from: request.startsAtFrom?.toISOString() ?? null, before: request.startsAtBefore?.toISOString() ?? null });
+    const filter = JSON.stringify({ city, scope, district: request.district?.trim() || null, categoryId: request.categoryId ?? null, from: request.startsAtFrom?.toISOString() ?? null, before: request.startsAtBefore?.toISOString() ?? null });
     const cursor = request.after ? this.decodeCursor(request.after, filter) : undefined;
     const query = this.dataSource.getRepository(EventRecord).createQueryBuilder('event')
       .innerJoin(EventLocationRecord, 'location', 'location.event_id = event.id')
       .innerJoin(CategoryRecord, 'category', 'category.id = event.category_id')
       .select(['event.id AS id', 'event.title AS title', 'event.starts_at AS "startsAt"', 'event.ends_at AS "endsAt"', 'event.timezone AS timezone', 'event.status AS status', 'event.capacity AS capacity', 'event.confirmed_count AS "confirmedCount"', 'category.id AS "categoryId"', 'category.name AS "categoryName"', 'category.is_active AS "categoryIsActive"', 'location.city AS city', 'location.district AS district', 'location.venue_name AS "venueName"'])
       .addSelect((subquery) => subquery.select('cover.media_asset_id').from(EventMediaRecord, 'cover').innerJoin(MediaAssetRecord, 'coverAsset', "coverAsset.id = cover.media_asset_id AND coverAsset.status = 'READY'").where("cover.event_id = event.id AND cover.role = 'COVER'"), 'coverMediaAssetId')
-      .where('event.status = :status', { status: 'PUBLISHED' }).andWhere('event.visibility = :visibility', { visibility: 'PUBLIC' }).andWhere('event.starts_at > :now', { now: this.now() }).andWhere('location.city = :city', { city });
+      .where(scope === 'UPCOMING' ? 'event.status = :status' : "event.status IN ('PUBLISHED', 'CANCELLED', 'COMPLETED')", { status: 'PUBLISHED' }).andWhere('event.visibility = :visibility', { visibility: 'PUBLIC' }).andWhere(scope === 'UPCOMING' ? 'event.starts_at > :now' : 'event.starts_at <= :now', { now: this.now() }).andWhere('location.city = :city', { city });
     if (request.district?.trim()) query.andWhere('location.district = :district', { district: request.district.trim() });
     if (request.categoryId) query.andWhere('event.category_id = :categoryId', { categoryId: request.categoryId });
     if (request.startsAtFrom) query.andWhere('event.starts_at >= :from', { from: request.startsAtFrom });
     if (request.startsAtBefore) query.andWhere('event.starts_at < :before', { before: request.startsAtBefore });
-    if (cursor) query.andWhere('(event.starts_at, event.id) > (:cursorStartsAt, :cursorId)', { cursorStartsAt: cursor.startsAt, cursorId: cursor.id });
+    if (cursor) query.andWhere(scope === 'UPCOMING' ? '(event.starts_at, event.id) > (:cursorStartsAt, :cursorId)' : '(event.starts_at, event.id) < (:cursorStartsAt, :cursorId)', { cursorStartsAt: cursor.startsAt, cursorId: cursor.id });
     if (request.viewer) query.addSelect('attendance.status', 'ownAttendanceStatus').leftJoin(AttendanceRecord, 'attendance', 'attendance.event_id = event.id AND attendance.user_id = :viewerId', { viewerId: request.viewer.userId });
-    const rows = await query.orderBy('event.starts_at', 'ASC').addOrderBy('event.id', 'ASC').limit(limit + 1).getRawMany();
+    const rows = await query.orderBy('event.starts_at', scope === 'UPCOMING' ? 'ASC' : 'DESC').addOrderBy('event.id', scope === 'UPCOMING' ? 'ASC' : 'DESC').limit(limit + 1).getRawMany();
     const hasMore = rows.length > limit; const visibleRows = rows.slice(0, limit); const last = visibleRows.at(-1);
     const activeCategories = await this.dataSource.getRepository(CategoryRecord).createQueryBuilder('category').select(['category.id AS id', 'category.name AS name']).where('category.is_active = true').orderBy('category.name', 'ASC').getRawMany();
     return { items: visibleRows.map((row) => this.card(row)), activeCategories, ...(hasMore && last ? { nextCursor: this.encodeCursor({ startsAt: new Date(last.startsAt).toISOString(), id: last.id, filter }) } : {}) };

@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { AppSidebar } from '../components/app-sidebar';
 import { CityPicker } from '../components/city-picker';
 import { apiUrl, getAccessToken } from '../../lib/api';
+import { categoryToneClass } from '../lib/category-tone';
 
 type EventCard = {
   id: string;
@@ -17,21 +18,23 @@ type EventCard = {
 };
 
 type DiscoveryPage = { items: EventCard[]; activeCategories: Array<{ id: string; name: string }> };
+type Scope = 'UPCOMING' | 'PAST';
 
 export default function DiscoverPage() {
   const [city, setCity] = useState('Istanbul');
   const [categoryId, setCategoryId] = useState<string | null>(null);
+  const [scope, setScope] = useState<Scope>('UPCOMING');
   const [events, setEvents] = useState<EventCard[]>([]);
   const [categories, setCategories] = useState<DiscoveryPage['activeCategories']>([]);
   const [notice, setNotice] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
-  async function loadEvents(targetCity = city, targetCategory = categoryId) {
+  async function loadEvents(targetCity = city, targetCategory = categoryId, targetScope = scope) {
     setIsLoading(true);
     setNotice('');
     try {
       const accessToken = getAccessToken();
-      const query = new URLSearchParams({ city: targetCity, limit: '50' });
+      const query = new URLSearchParams({ city: targetCity, scope: targetScope, limit: '50' });
       if (targetCategory) query.set('categoryId', targetCategory);
       const response = await fetch(`${apiUrl}/api/v1/events?${query.toString()}`, {
         headers: accessToken ? { authorization: `Bearer ${accessToken}` } : undefined,
@@ -47,7 +50,7 @@ export default function DiscoverPage() {
     }
   }
 
-  useEffect(() => { void loadEvents('Istanbul', null); }, []);
+  useEffect(() => { void loadEvents('Istanbul', null, 'UPCOMING'); }, []);
 
   const days = useMemo(() => groupByDay(events), [events]);
 
@@ -61,22 +64,28 @@ export default function DiscoverPage() {
     void loadEvents(city, selectedCategory);
   }
 
+  function selectScope(selectedScope: Scope) {
+    setScope(selectedScope);
+    void loadEvents(city, categoryId, selectedScope);
+  }
+
   return (
     <AppSidebar>
       <section className="discover-stage">
         <header className="discover-header">
-          <div><p className="auth-eyebrow">Keşfet</p><h1 className="discover-title">Şehirde buluş.</h1><p>Yaklaşan Public etkinlikler, en yakın saatten başlayarak tek akışta.</p></div>
+          <div><p className="auth-eyebrow">Keşfet</p><h1 className="discover-title">Şehirde buluş.</h1><p>{scope === 'UPCOMING' ? 'Yaklaşan Public etkinlikler, en yakın saatten başlayarak tek akışta.' : 'Şehirde daha önce gerçekleşmiş Public etkinlikler.'}</p></div>
           <CityPicker value={city} onValueChange={selectCity} isLoading={isLoading} />
         </header>
         <div className="discover-filters" aria-label="Etkinlik filtreleri">
+          <div className="my-events-tabs" role="tablist" aria-label="Etkinlik zaman aralığı"><button className={scope === 'UPCOMING' ? 'is-active' : ''} type="button" role="tab" aria-selected={scope === 'UPCOMING'} onClick={() => selectScope('UPCOMING')} disabled={isLoading}>Yaklaşan</button><button className={scope === 'PAST' ? 'is-active' : ''} type="button" role="tab" aria-selected={scope === 'PAST'} onClick={() => selectScope('PAST')} disabled={isLoading}>Geçmiş</button></div>
           <div className="discover-category-strip" role="list" aria-label="Kategoriler">
             <button className={categoryId === null ? 'is-selected' : ''} type="button" onClick={() => selectCategory(null)} disabled={isLoading}>Tümü</button>
             {categories.map((category) => <button className={categoryId === category.id ? 'is-selected' : ''} type="button" onClick={() => selectCategory(category.id)} disabled={isLoading} key={category.id}>{category.name}</button>)}
           </div>
-          <p>{isLoading ? 'Etkinlikler yenileniyor…' : `${events.length} yaklaşan etkinlik`}</p>
+          <p>{isLoading ? 'Etkinlikler yenileniyor…' : `${events.length} ${scope === 'UPCOMING' ? 'yaklaşan' : 'geçmiş'} etkinlik`}</p>
         </div>
         {notice && <p className="form-note" role="alert">{notice}</p>}
-        {!isLoading && !notice && events.length === 0 && <p className="empty-state">Bu şehirde yaklaşan Public etkinlik bulunmuyor.</p>}
+        {!isLoading && !notice && events.length === 0 && <p className="empty-state">Bu şehirde {scope === 'UPCOMING' ? 'yaklaşan' : 'geçmiş'} Public etkinlik bulunmuyor.</p>}
         <div className="discover-feed">
           {days.map((day) => <section className="discover-day" key={day.key}><h2>{formatDay(day.date)}</h2><div>{day.items.map((event) => <DiscoverEvent event={event} key={event.id} />)}</div></section>)}
         </div>
@@ -89,7 +98,7 @@ function DiscoverEvent({ event }: { event: EventCard }) {
   const location = event.location.venueName ?? `${event.location.city} · ${event.location.district}`;
   const capacity = event.capacity.kind === 'UNLIMITED' ? 'Katılım açık' : `${event.capacity.availableSeats} yer kaldı`;
   return <Link className="discover-event" href={`/events/${event.id}`}>
-    <time>{formatTime(event.startsAt)}</time><i aria-hidden="true" /><span className="discover-event-copy"><small>{event.category.name}</small><strong>{event.title}</strong><em>{location} · {capacity}</em></span>
+    <time>{formatTime(event.startsAt)}</time><i className={categoryToneClass(event.category.name)} aria-hidden="true" /><span className="discover-event-copy"><small>{event.category.name}</small><strong>{event.title}</strong><em>{location} · {capacity}</em></span>
     {event.coverMediaAssetId && <img src={`${apiUrl}/api/v1/media/${event.coverMediaAssetId}`} alt="" onError={(image) => { image.currentTarget.style.display = 'none'; }} />}<b aria-hidden="true">↗</b>
   </Link>;
 }

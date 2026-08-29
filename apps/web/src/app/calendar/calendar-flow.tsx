@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useMemo, useState } from 'react';
 import { apiUrl } from '../../lib/api';
 import { CityPicker } from '../components/city-picker';
+import { categoryToneClass } from '../lib/category-tone';
 
 export type CalendarEvent = {
   id: string;
@@ -39,7 +40,7 @@ export function CalendarFlow({ events, city, onCitySelect, isGuest, isLoading }:
       <div className="calendar-selected-day">
         <p>{selectedDay ? formatLongDate(selectedDay.date) : 'Bugün'}</p>
         {dayEvents.length > 0 ? <div className="calendar-stream-axis">{dayEvents.map((event, index) => <button className="calendar-stream-event" type="button" key={event.id} onClick={() => setSelectedEvent(event)}>
-        <time>{formatTime(event.startsAt)}</time><i aria-hidden="true" /><span className="calendar-stream-content">{event.coverMediaAssetId && <img className="calendar-stream-cover" src={mediaUrl(event.coverMediaAssetId)} alt="" onError={(image) => { image.currentTarget.style.display = 'none'; }} />}<span className="calendar-stream-copy"><small>{event.ownAttendanceStatus === 'CONFIRMED' ? 'KATILIYORSUN' : index === 0 ? 'YAKLAŞAN' : event.category.name}</small><strong>{event.title}</strong><em>{event.location.venueName ?? `${event.location.city} · ${event.location.district}`} · {formatAttendance(event.capacity)}</em></span></span><b aria-hidden="true">↗</b>
+        <time>{formatTime(event.startsAt)}</time><i className={categoryToneClass(event.category.name)} aria-hidden="true" /><span className="calendar-stream-content">{event.coverMediaAssetId && <img className="calendar-stream-cover" src={mediaUrl(event.coverMediaAssetId)} alt="" onError={(image) => { image.currentTarget.style.display = 'none'; }} />}<span className="calendar-stream-copy"><small>{event.ownAttendanceStatus === 'CONFIRMED' ? 'KATILIYORSUN' : index === 0 ? 'YAKLAŞAN' : event.category.name}</small><strong>{event.title}</strong><em>{event.location.venueName ?? `${event.location.city} · ${event.location.district}`} · {formatAttendance(event.capacity)}</em></span></span><b aria-hidden="true">↗</b>
         </button>)}</div> : <div className="calendar-selection-empty"><strong>Bu gün boş.</strong><span>Başka günleri kaydırarak göz atabilir ya da yeni bir etkinlik keşfedebilirsin.</span><Link href="/discover">Etkinlik keşfet →</Link></div>}
       </div>
     </section>

@@ -25,6 +25,10 @@ class DiscoveryQuery {
   district?: string;
 
   @IsOptional()
+  @IsString()
+  scope?: string;
+
+  @IsOptional()
   @IsUUID()
   categoryId?: string;
 
@@ -65,7 +69,7 @@ export class EventDiscoveryHttpController {
   ) {
     const viewer = await this.optionalViewer(authorization);
     try {
-      return await this.discovery.discover({ viewer, ...query });
+      return await this.discovery.discover({ viewer, ...query, scope: query.scope === undefined || query.scope === 'UPCOMING' || query.scope === 'PAST' ? query.scope : (() => { throw new EventDiscoveryBusinessError('INVALID_DISCOVERY_FILTER'); })() });
     } catch (error) {
       if (error instanceof EventDiscoveryBusinessError) throw new BadRequestException(error.code);
       throw error;
