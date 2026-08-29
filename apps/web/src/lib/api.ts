@@ -31,8 +31,33 @@ export function storeSession(session: Session): void {
 
 export function getAccessToken(): string | null {
   const token = localStorage.getItem(accessTokenKey) ?? sessionStorage.getItem(accessTokenKey);
+  if (token && isAccessTokenExpired(token)) {
+    clearStoredSession();
+    return null;
+  }
   if (token && !localStorage.getItem(accessTokenKey)) localStorage.setItem(accessTokenKey, token);
   return token;
+}
+
+export function isStoredSessionExpired(): boolean {
+  const token = localStorage.getItem(accessTokenKey) ?? sessionStorage.getItem(accessTokenKey);
+  return Boolean(token && isAccessTokenExpired(token));
+}
+
+export function accessTokenExpiresAt(token: string): number | null {
+  try {
+    const payload = token.split('.')[1];
+    if (!payload) return null;
+    const decoded = JSON.parse(atob(payload.replace(/-/g, '+').replace(/_/g, '/'))) as { exp?: number };
+    return typeof decoded.exp === 'number' ? decoded.exp * 1_000 : null;
+  } catch {
+    return null;
+  }
+}
+
+export function isAccessTokenExpired(token: string, now = Date.now()): boolean {
+  const expiresAt = accessTokenExpiresAt(token);
+  return expiresAt !== null && expiresAt <= now;
 }
 
 export function getSessionIdentity(): Session['identity'] | null {

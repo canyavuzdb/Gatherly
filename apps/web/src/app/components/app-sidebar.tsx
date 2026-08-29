@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, useState, type ReactNode } from 'react';
-import { apiUrl, clearStoredSession, getAccessToken, getSessionIdentity } from '../../lib/api';
+import { accessTokenExpiresAt, apiUrl, clearStoredSession, getAccessToken, getSessionIdentity, isStoredSessionExpired } from '../../lib/api';
 
 type Profile = {
   firstName: string;
@@ -17,12 +17,29 @@ export function AppSidebar({ children }: { children: ReactNode }) {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
+  const [unreadNotificationCount, setUnreadNotificationCount] = useState(0);
+  const [isGuestAccessPromptOpen, setIsGuestAccessPromptOpen] = useState(false);
+
+  function endExpiredSession() {
+    clearStoredSession();
+    router.replace('/login');
+  }
+
+  function requestGuestAccess() {
+    if (!isAuthenticated) setIsGuestAccessPromptOpen(true);
+  }
 
   useEffect(() => {
+    if (isStoredSessionExpired()) {
+      endExpiredSession();
+      return;
+    }
     const accessToken = getAccessToken();
     const identity = getSessionIdentity();
     if (!accessToken || !identity?.userId) return;
     setIsAuthenticated(true);
+    const expiresAt = accessTokenExpiresAt(accessToken);
+    const expiryTimer = expiresAt === null ? undefined : window.setTimeout(endExpiredSession, Math.max(0, expiresAt - Date.now()));
     let objectUrl: string | null = null;
     async function loadProfile() {
       try {
@@ -32,6 +49,7 @@ export function AppSidebar({ children }: { children: ReactNode }) {
         }
         setAvatarUrl(null);
         const response = await fetch(`${apiUrl}/api/v1/users/${identity!.userId}/profile`, { headers: { authorization: `Bearer ${accessToken}` } });
+        if (response.status === 401) { endExpiredSession(); return; }
         if (!response.ok) return;
         const loadedProfile = await response.json() as Profile;
         setProfile(loadedProfile);
@@ -48,7 +66,34 @@ export function AppSidebar({ children }: { children: ReactNode }) {
     window.addEventListener('gatherly-profile-updated', loadProfile);
     return () => {
       window.removeEventListener('gatherly-profile-updated', loadProfile);
+      if (expiryTimer) window.clearTimeout(expiryTimer);
       if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, []);
+
+  useEffect(() => {
+    const accessToken = getAccessToken();
+    if (!accessToken) return;
+    async function loadNotificationSummary() {
+      try {
+        const response = await fetch(`${apiUrl}/api/v1/notifications?limit=1`, { headers: { authorization: `Bearer ${accessToken}` } });
+        if (response.status === 401) { endExpiredSession(); return; }
+        if (!response.ok) return;
+        const page = await response.json() as { unreadCount: number };
+        setUnreadNotificationCount(page.unreadCount);
+      } catch {
+        // A badge is supplementary; navigation remains available without it.
+      }
+    }
+    void loadNotificationSummary();
+    const refresh = () => void loadNotificationSummary();
+    const timer = window.setInterval(refresh, 20_000);
+    window.addEventListener('focus', refresh);
+    window.addEventListener('gatherly-notifications-updated', refresh);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener('focus', refresh);
+      window.removeEventListener('gatherly-notifications-updated', refresh);
     };
   }, []);
 
