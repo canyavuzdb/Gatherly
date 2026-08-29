@@ -78,12 +78,14 @@ export class EventDiscoveryHttpController {
     @Headers('authorization') authorization: string | undefined,
     @Query('after') after?: string,
     @Query('limit') limit?: string,
+    @Query('scope') scope?: string,
   ) {
     const accessToken = readBearerToken(authorization);
     if (!accessToken) throw new UnauthorizedException('ACCESS_TOKEN_INVALID');
     try {
       return await this.discovery.personalCalendar({
         actor: await this.auth.authenticate(accessToken),
+        scope: scope === undefined || scope === 'UPCOMING' || scope === 'PAST' ? scope : (() => { throw new EventDiscoveryBusinessError('INVALID_DISCOVERY_FILTER'); })(),
         after,
         limit: limit === undefined ? undefined : Number(limit),
       });
