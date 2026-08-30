@@ -182,6 +182,11 @@ export class EventsImplementation implements EventModule {
       location.district = definition.location.district;
       location.venueName = definition.location.venueName;
       location.address = definition.location.address;
+      location.latitude = definition.location.latitude;
+      location.longitude = definition.location.longitude;
+      location.routeMode = definition.location.routeMode;
+      location.routeEndLatitude = definition.location.routeEndLatitude;
+      location.routeEndLongitude = definition.location.routeEndLongitude;
       location.addressVisibility = definition.location.addressVisibility;
       location.updatedByUserId = command.actorUserId;
       location.updatedByKind = 'USER';
@@ -313,6 +318,11 @@ export class EventsImplementation implements EventModule {
         district: definition.location.district.trim(),
         venueName: definition.location.venueName?.trim() || null,
         address: definition.location.address?.trim() || null,
+        latitude: definition.location.latitude ?? null,
+        longitude: definition.location.longitude ?? null,
+        routeMode: definition.location.routeMode ?? 'NONE',
+        routeEndLatitude: definition.location.routeEndLatitude ?? null,
+        routeEndLongitude: definition.location.routeEndLongitude ?? null,
       },
     };
     if (normalized.endsAt <= normalized.startsAt) {
@@ -324,6 +334,11 @@ export class EventsImplementation implements EventModule {
       !normalized.location.city || normalized.location.city.length > 100 ||
       !normalized.location.district || normalized.location.district.length > 100 ||
       (normalized.location.venueName?.length ?? 0) > 160 ||
+      (normalized.location.latitude === null) !== (normalized.location.longitude === null) ||
+      (normalized.location.routeEndLatitude === null) !== (normalized.location.routeEndLongitude === null) ||
+      (normalized.location.routeMode === 'NONE' && normalized.location.routeEndLatitude !== null) ||
+      (normalized.location.routeMode !== 'NONE' && (normalized.location.latitude === null || normalized.location.routeEndLatitude === null)) ||
+      (normalized.location.latitude !== null && (!Number.isFinite(normalized.location.latitude) || normalized.location.latitude < -90 || normalized.location.latitude > 90 || !Number.isFinite(normalized.location.longitude!) || normalized.location.longitude! < -180 || normalized.location.longitude! > 180)) ||
       (normalized.capacity !== null && (!Number.isInteger(normalized.capacity) || normalized.capacity < 1)) ||
       (normalized.capacity !== null && normalized.capacity < 1)
     ) {
@@ -342,7 +357,7 @@ export class EventsImplementation implements EventModule {
 function draftOutcome(event: EventRecord, location: EventLocationRecord | CompleteEventDefinition['location']): DraftCreated {
   return {
     kind: 'DRAFT_CREATED',
-    event: { id: event.id, organizerId: event.organizerId, categoryId: event.categoryId, title: event.title, description: event.description, startsAt: event.startsAt, endsAt: event.endsAt, timezone: event.timezone, capacity: event.capacity, confirmedCount: event.confirmedCount, visibility: event.visibility, joinPolicy: event.joinPolicy, status: event.status, shareToken: event.shareToken, version: event.version, location: { city: location.city, district: location.district, venueName: location.venueName, address: location.address, addressVisibility: location.addressVisibility } },
+    event: { id: event.id, organizerId: event.organizerId, categoryId: event.categoryId, title: event.title, description: event.description, startsAt: event.startsAt, endsAt: event.endsAt, timezone: event.timezone, capacity: event.capacity, confirmedCount: event.confirmedCount, visibility: event.visibility, joinPolicy: event.joinPolicy, status: event.status, shareToken: event.shareToken, version: event.version, location: { city: location.city, district: location.district, venueName: location.venueName, address: location.address, latitude: location.latitude, longitude: location.longitude, routeMode: location.routeMode, routeEndLatitude: location.routeEndLatitude, routeEndLongitude: location.routeEndLongitude, addressVisibility: location.addressVisibility } },
     capacity: { capacity: event.capacity, confirmedCount: event.confirmedCount, availableCount: event.capacity === null ? null : event.capacity - event.confirmedCount },
   };
 }

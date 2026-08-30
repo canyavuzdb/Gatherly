@@ -17,6 +17,8 @@ import {
   IsDate,
   IsIn,
   IsInt,
+  IsLatitude,
+  IsLongitude,
   IsOptional,
   IsString,
   IsUUID,
@@ -47,6 +49,25 @@ class EventLocationRequest implements EventLocationInput {
   @IsOptional()
   @IsString()
   address!: string | null;
+
+  @IsOptional()
+  @IsLatitude()
+  latitude!: number | null;
+
+  @IsOptional()
+  @IsLongitude()
+  longitude!: number | null;
+
+  @IsIn(['NONE', 'WALKING', 'CYCLING', 'DRIVING'])
+  routeMode!: 'NONE' | 'WALKING' | 'CYCLING' | 'DRIVING';
+
+  @IsOptional()
+  @IsLatitude()
+  routeEndLatitude!: number | null;
+
+  @IsOptional()
+  @IsLongitude()
+  routeEndLongitude!: number | null;
 
   @IsIn(['EVENT_VIEWERS', 'CONFIRMED_ATTENDEES'])
   addressVisibility!: 'EVENT_VIEWERS' | 'CONFIRMED_ATTENDEES';

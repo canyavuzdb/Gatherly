@@ -105,6 +105,21 @@ export class EventLocationRecord {
   @Column({ type: 'text', nullable: true })
   address!: string | null;
 
+  @Column({ type: 'double precision', nullable: true })
+  latitude!: number | null;
+
+  @Column({ type: 'double precision', nullable: true })
+  longitude!: number | null;
+
+  @Column({ name: 'route_mode', type: 'varchar', default: 'NONE' })
+  routeMode!: 'NONE' | 'WALKING' | 'CYCLING' | 'DRIVING';
+
+  @Column({ name: 'route_end_latitude', type: 'double precision', nullable: true })
+  routeEndLatitude!: number | null;
+
+  @Column({ name: 'route_end_longitude', type: 'double precision', nullable: true })
+  routeEndLongitude!: number | null;
+
   @Column({ name: 'address_visibility', type: 'varchar' })
   addressVisibility!: 'EVENT_VIEWERS' | 'CONFIRMED_ATTENDEES';
 

@@ -8,6 +8,11 @@ export type EventLocationInput = {
   district: string;
   venueName: string | null;
   address: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  routeMode: 'NONE' | 'WALKING' | 'CYCLING' | 'DRIVING';
+  routeEndLatitude: number | null;
+  routeEndLongitude: number | null;
   addressVisibility: 'EVENT_VIEWERS' | 'CONFIRMED_ATTENDEES';
 };
 
