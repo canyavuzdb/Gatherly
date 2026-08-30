@@ -169,6 +169,39 @@ export class AuthHttpController {
     return { kind: 'SIGNED_OUT' };
   }
 
+  @Post('refresh')
+  @HttpCode(HttpStatus.OK)
+  async refresh(
+    @Headers('cookie') cookieHeader: string | undefined,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    try {
+      const outcome = asSessionGrant(
+        await this.auth.decide({
+          kind: 'REFRESH_SESSION',
+          refreshSecret: readCookie(cookieHeader, 'refresh_secret') ?? '',
+        }),
+      );
+      response.cookie('refresh_secret', outcome.refreshSecret, {
+        httpOnly: true,
+        sameSite: 'lax',
+        secure: process.env.NODE_ENV !== 'development',
+        expires: outcome.refreshExpiresAt,
+      });
+      return { accessToken: outcome.accessToken, identity: outcome.identity };
+    } catch (error) {
+      response.clearCookie('refresh_secret', {
+        httpOnly: true,
+        sameSite: 'lax',
+        secure: process.env.NODE_ENV !== 'development',
+      });
+      if (error instanceof AuthBusinessError && error.code === 'REFRESH_SESSION_INVALID') {
+        throw new UnauthorizedException(error.code);
+      }
+      throw error;
+    }
+  }
+
   @Post('self-delete')
   @HttpCode(HttpStatus.OK)
   async selfDelete(

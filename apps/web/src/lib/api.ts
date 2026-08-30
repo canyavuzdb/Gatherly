@@ -31,10 +31,6 @@ export function storeSession(session: Session): void {
 
 export function getAccessToken(): string | null {
   const token = localStorage.getItem(accessTokenKey) ?? sessionStorage.getItem(accessTokenKey);
-  if (token && isAccessTokenExpired(token)) {
-    clearStoredSession();
-    return null;
-  }
   if (token && !localStorage.getItem(accessTokenKey)) localStorage.setItem(accessTokenKey, token);
   return token;
 }
@@ -42,6 +38,55 @@ export function getAccessToken(): string | null {
 export function isStoredSessionExpired(): boolean {
   const token = localStorage.getItem(accessTokenKey) ?? sessionStorage.getItem(accessTokenKey);
   return Boolean(token && isAccessTokenExpired(token));
+}
+
+const refreshWindowMilliseconds = 60_000;
+let refreshInFlight: Promise<Session | null> | null = null;
+
+export async function refreshSession(): Promise<Session | null> {
+  if (refreshInFlight) return refreshInFlight;
+  refreshInFlight = (async () => {
+    try {
+      const response = await fetch(`${apiUrl}/api/v1/auth/refresh`, {
+        method: 'POST',
+        credentials: 'include',
+      });
+      if (!response.ok) throw new Error('REFRESH_SESSION_INVALID');
+      const session = await response.json() as Session;
+      storeSession(session);
+      return session;
+    } catch {
+      clearStoredSession();
+      window.dispatchEvent(new Event('gatherly-session-expired'));
+      return null;
+    } finally {
+      refreshInFlight = null;
+    }
+  })();
+  return refreshInFlight;
+}
+
+export async function getUsableAccessToken(): Promise<string | null> {
+  const token = getAccessToken();
+  if (!token) return null;
+  const expiresAt = accessTokenExpiresAt(token);
+  if (expiresAt === null || expiresAt > Date.now() + refreshWindowMilliseconds) return token;
+  return (await refreshSession())?.accessToken ?? null;
+}
+
+export async function authenticatedFetch(path: string, init: RequestInit = {}): Promise<Response> {
+  const token = await getUsableAccessToken();
+  const request = (accessToken: string | null) => {
+    const headers = new Headers(init.headers);
+    if (accessToken) headers.set('authorization', `Bearer ${accessToken}`);
+    else headers.delete('authorization');
+    return fetch(`${apiUrl}${path}`, { ...init, headers });
+  };
+  const response = await request(token);
+  if (response.status !== 401 || !token) return response;
+
+  const refreshed = await refreshSession();
+  return refreshed ? request(refreshed.accessToken) : response;
 }
 
 export function accessTokenExpiresAt(token: string): number | null {

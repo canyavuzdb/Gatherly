@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { AppSidebar } from '../components/app-sidebar';
-import { apiUrl, getAccessToken } from '../../lib/api';
+import { authenticatedFetch, getAccessToken } from '../../lib/api';
 import { CalendarFlow, type CalendarEvent } from './calendar-flow';
 
 export default function CalendarPage() {
@@ -18,9 +18,7 @@ export default function CalendarPage() {
     const accessToken = getAccessToken();
     setIsGuest(!accessToken);
     try {
-      const response = await fetch(`${apiUrl}/api/v1/events?city=${encodeURIComponent(targetCity)}&limit=50`, {
-        headers: accessToken ? { authorization: `Bearer ${accessToken}` } : undefined,
-      });
+      const response = await authenticatedFetch(`/api/v1/events?city=${encodeURIComponent(targetCity)}&limit=50`);
       if (!response.ok) throw new Error('Şehir takvimi şu an yüklenemedi.');
       const page = await response.json() as { items: CalendarEvent[] };
       setEvents(page.items);
