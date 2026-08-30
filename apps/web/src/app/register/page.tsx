@@ -11,6 +11,7 @@ export default function RegisterPage() {
   const [lastName, setLastName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [isPasswordVisible, setIsPasswordVisible] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const router = useRouter();
 
@@ -51,7 +52,7 @@ export default function RegisterPage() {
             </label>
             <label className="field">
               <span className="field-label">Şifre</span>
-              <input className="field-input" type="password" autoComplete="new-password" placeholder="En az 12 karakter" value={password} onChange={(event) => setPassword(event.target.value)} required minLength={12} />
+              <span className="password-field"><input className="field-input" type={isPasswordVisible ? 'text' : 'password'} autoComplete="new-password" placeholder="En az 12 karakter" value={password} onChange={(event) => setPassword(event.target.value)} required minLength={12} /><button className="password-toggle" type="button" onClick={() => setIsPasswordVisible((visible) => !visible)} aria-label={isPasswordVisible ? 'Şifreyi gizle' : 'Şifreyi göster'}>{isPasswordVisible ? 'Gizle' : 'Göster'}</button></span>
             </label>
             <button className="primary-button" type="submit" disabled={isSubmitting}>{isSubmitting ? 'Hesap oluşturuluyor…' : 'Hesap oluştur'}</button>
             <p className="form-note" aria-live="polite">{notice}</p>

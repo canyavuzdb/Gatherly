@@ -9,6 +9,7 @@ export default function ResetPasswordPage() {
   const router = useRouter();
   const [resetSecret, setResetSecret] = useState('');
   const [newPassword, setNewPassword] = useState('');
+  const [isPasswordVisible, setIsPasswordVisible] = useState(false);
   const [notice, setNotice] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -35,7 +36,7 @@ export default function ResetPasswordPage() {
     <div className="auth-brand"><div className="wordmark" aria-label="Gatherly"><span className="wordmark-mark">••</span>Gatherly</div></div>
     <section className="auth-stage" aria-labelledby="reset-password-title"><div className="auth-card">
       <p className="auth-eyebrow">Yeni şifre</p><h1 className="auth-title" id="reset-password-title">Yeni bir şifre belirle.</h1>
-      <form className="auth-form" onSubmit={submit}><label className="field"><span className="field-label">Sıfırlama kodu</span><input className="field-input" value={resetSecret} onChange={(event) => setResetSecret(event.target.value)} required /></label><label className="field"><span className="field-label">Yeni şifre</span><input className="field-input" type="password" autoComplete="new-password" minLength={12} value={newPassword} onChange={(event) => setNewPassword(event.target.value)} required /></label><button className="primary-button" type="submit" disabled={isSubmitting}>{isSubmitting ? 'Kaydediliyor…' : 'Şifreyi güncelle'}</button><p className="form-note" aria-live="polite">{notice}</p></form><p className="auth-alternate"><Link href="/login">Girişe dön</Link></p>
+      <form className="auth-form" onSubmit={submit}><label className="field"><span className="field-label">Sıfırlama kodu</span><input className="field-input" value={resetSecret} onChange={(event) => setResetSecret(event.target.value)} required /></label><label className="field"><span className="field-label">Yeni şifre</span><span className="password-field"><input className="field-input" type={isPasswordVisible ? 'text' : 'password'} autoComplete="new-password" minLength={12} value={newPassword} onChange={(event) => setNewPassword(event.target.value)} required /><button className="password-toggle" type="button" onClick={() => setIsPasswordVisible((visible) => !visible)} aria-label={isPasswordVisible ? 'Yeni şifreyi gizle' : 'Yeni şifreyi göster'}>{isPasswordVisible ? 'Gizle' : 'Göster'}</button></span></label><button className="primary-button" type="submit" disabled={isSubmitting}>{isSubmitting ? 'Kaydediliyor…' : 'Şifreyi güncelle'}</button><p className="form-note" aria-live="polite">{notice}</p></form><p className="auth-alternate"><Link href="/login">Girişe dön</Link></p>
     </div></section>
   </main>;
 }

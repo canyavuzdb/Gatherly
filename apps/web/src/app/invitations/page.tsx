@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
 import { AppSidebar } from '../components/app-sidebar';
-import { apiUrl, getAccessToken } from '../../lib/api';
+import { authenticatedFetch, getAccessToken } from '../../lib/api';
 
 type Invitation = { id: string; eventId: string; status: string; expiresAt: string; event?: { title: string; startsAt: string } };
 
@@ -13,7 +13,7 @@ export default function InvitationsPage() {
     const token = getAccessToken();
     if (!token) { setNotice('Davetlerini görmek için giriş yapmalısın.'); return; }
     try {
-      const response = await fetch(`${apiUrl}/api/v1/invitations/me`, { headers: { authorization: `Bearer ${token}` } });
+      const response = await authenticatedFetch('/api/v1/invitations/me');
       if (!response.ok) throw new Error();
       setItems(await response.json() as Invitation[]); setNotice('');
     } catch { setNotice('Davetlerin şu an yüklenemedi.'); }

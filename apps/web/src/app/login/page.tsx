@@ -9,6 +9,7 @@ export default function LoginPage() {
   const [notice, setNotice] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [isPasswordVisible, setIsPasswordVisible] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const router = useRouter();
   const pathname = usePathname();
@@ -67,7 +68,7 @@ export default function LoginPage() {
             </label>
             <label className="field">
               <span className="field-label">Şifre</span>
-              <input className="field-input" type="password" autoComplete="current-password" placeholder="Şifren" value={password} onChange={(event) => setPassword(event.target.value)} required />
+              <span className="password-field"><input className="field-input" type={isPasswordVisible ? 'text' : 'password'} autoComplete="current-password" placeholder="Şifren" value={password} onChange={(event) => setPassword(event.target.value)} required /><button className="password-toggle" type="button" onClick={() => setIsPasswordVisible((visible) => !visible)} aria-label={isPasswordVisible ? 'Şifreyi gizle' : 'Şifreyi göster'}>{isPasswordVisible ? 'Gizle' : 'Göster'}</button></span>
             </label>
             <div className="form-row"><Link className="text-button" href="/forgot-password">Şifremi unuttum</Link></div>
             <button className="primary-button" type="submit" disabled={isSubmitting}>{isSubmitting ? 'Giriş yapılıyor…' : 'Giriş yap'}</button>

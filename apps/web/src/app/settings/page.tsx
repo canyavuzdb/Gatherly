@@ -3,7 +3,7 @@
 import { FormEvent, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { AppSidebar } from '../components/app-sidebar';
-import { apiUrl, clearStoredSession, getAccessToken } from '../../lib/api';
+import { authenticatedFetch, clearStoredSession, getAccessToken } from '../../lib/api';
 
 type Profile = {
   email: string;
@@ -50,14 +50,14 @@ export default function SettingsPage() {
 
     async function loadProfile() {
       try {
-        const response = await fetch(`${apiUrl}/api/v1/users/me/profile`, { headers: { authorization: `Bearer ${token}` } });
+        const response = await authenticatedFetch('/api/v1/users/me/profile');
         if (!response.ok) throw new Error('PROFILE_UNAVAILABLE');
         const loadedProfile = await response.json() as Profile;
         setProfile(loadedProfile);
-        const quotaResponse = await fetch(`${apiUrl}/api/v1/users/me/event-creation-quota`, { headers: { authorization: `Bearer ${token}` } });
+        const quotaResponse = await authenticatedFetch('/api/v1/users/me/event-creation-quota');
         if (quotaResponse.ok) setQuota(await quotaResponse.json() as Quota);
         if (!loadedProfile.avatar) return;
-        const image = await fetch(`${apiUrl}/api/v1/media/${loadedProfile.avatar.mediaAssetId}`, { headers: { authorization: `Bearer ${token}` } });
+        const image = await authenticatedFetch(`/api/v1/media/${loadedProfile.avatar.mediaAssetId}`);
         if (!image.ok) return;
         objectUrl = URL.createObjectURL(await image.blob());
         setAvatarUrl(objectUrl);
@@ -86,7 +86,7 @@ export default function SettingsPage() {
     try {
       const formData = new FormData();
       formData.append('image', image);
-      const upload = await fetch(`${apiUrl}/api/v1/media/images`, { method: 'POST', headers: { authorization: `Bearer ${token}` }, body: formData });
+      const upload = await authenticatedFetch('/api/v1/media/images', { method: 'POST', body: formData });
       if (!upload.ok) {
         const payload = await upload.json().catch(() => null) as { message?: string } | null;
         if (payload?.message === 'USER_NOT_VERIFIED') {
@@ -98,14 +98,14 @@ export default function SettingsPage() {
       }
       const uploaded = await upload.json() as UploadOutcome;
       if (uploaded.kind !== 'IMAGE_UPLOADED') throw new Error('UPLOAD_FAILED');
-      const assignment = await fetch(`${apiUrl}/api/v1/media/profile/avatar`, {
+      const assignment = await authenticatedFetch('/api/v1/media/profile/avatar', {
         method: 'POST',
-        headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ mediaAssetId: uploaded.mediaAsset.id }),
       });
       if (!assignment.ok) throw new Error('ASSIGNMENT_FAILED');
       setAvatarUrl(URL.createObjectURL(image));
-      const refreshed = await fetch(`${apiUrl}/api/v1/users/me/profile`, { headers: { authorization: `Bearer ${token}` } });
+      const refreshed = await authenticatedFetch('/api/v1/users/me/profile');
       if (refreshed.ok) setProfile(await refreshed.json() as Profile);
       window.dispatchEvent(new Event('gatherly-profile-updated'));
       setNotice('Profil fotoğrafın güncellendi.');
@@ -121,9 +121,9 @@ export default function SettingsPage() {
     event.preventDefault();
     if (!profile) return;
     const token = getAccessToken();
-    const response = await fetch(`${apiUrl}/api/v1/users/me/profile`, {
+    const response = await authenticatedFetch('/api/v1/users/me/profile', {
       method: 'PATCH',
-      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ expectedVersion: profile.version, firstName: profile.firstName, lastName: profile.lastName, bio: profile.bio, visibility: profile.visibility }),
     });
     if (!response.ok) {
@@ -140,7 +140,7 @@ export default function SettingsPage() {
     if (!token) return;
     setIsResendingVerification(true);
     try {
-      const response = await fetch(`${apiUrl}/api/v1/auth/resend-verification`, { method: 'POST', headers: { authorization: `Bearer ${token}` } });
+      const response = await authenticatedFetch('/api/v1/auth/resend-verification', { method: 'POST' });
       if (response.status === 429) {
         setNotice('Yeni doğrulama e-postası için kısa süre sonra tekrar dene.');
         return;
@@ -157,7 +157,7 @@ export default function SettingsPage() {
   async function removeAvatar() {
     const token = getAccessToken();
     if (!token || !profile?.avatar) return;
-    const response = await fetch(`${apiUrl}/api/v1/media/profile/avatar`, { method: 'DELETE', headers: { authorization: `Bearer ${token}` } });
+    const response = await authenticatedFetch('/api/v1/media/profile/avatar', { method: 'DELETE' });
     if (!response.ok) { setNotice('Profil fotoğrafı kaldırılamadı. Lütfen tekrar dene.'); return; }
     setAvatarUrl(null);
     setProfile({ ...profile, avatar: null, version: profile.version + 1 });
@@ -176,7 +176,7 @@ export default function SettingsPage() {
     setIsChangingPassword(true);
     setSecurityNotice('');
     try {
-      const response = await fetch(`${apiUrl}/api/v1/auth/change-password`, { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify({ currentPassword, newPassword }) });
+      const response = await authenticatedFetch('/api/v1/auth/change-password', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ currentPassword, newPassword }) });
       if (!response.ok) {
         const payload = await response.json().catch(() => null) as { message?: string } | null;
         setSecurityNotice(payload?.message === 'CURRENT_PASSWORD_INCORRECT' ? 'Mevcut şifren eşleşmedi.' : 'Şifre değiştirilemedi. Lütfen tekrar dene.');
@@ -195,7 +195,7 @@ export default function SettingsPage() {
     setIsDeletingAccount(true);
     setDeleteNotice('');
     try {
-      const response = await fetch(`${apiUrl}/api/v1/auth/self-delete`, { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify({ currentPassword }) });
+      const response = await authenticatedFetch('/api/v1/auth/self-delete', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ currentPassword }) });
       if (!response.ok) {
         const payload = await response.json().catch(() => null) as { message?: string } | null;
         const messages: Record<string, string> = { CURRENT_PASSWORD_INCORRECT: 'Mevcut şifren eşleşmedi.', SELF_DELETE_BLOCKED_BY_FUTURE_EVENTS: 'Yaklaşan düzenlediğin etkinlikler varken hesabını kapatamazsın.', SELF_DELETE_BLOCKED_BY_ACTIVE_ATTENDANCES: 'Aktif katılımların varken hesabını kapatamazsın.' };

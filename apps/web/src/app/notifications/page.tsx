@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
 import { AppSidebar } from '../components/app-sidebar';
-import { apiUrl, getAccessToken } from '../../lib/api';
+import { authenticatedFetch, getAccessToken } from '../../lib/api';
 
 type Notification = { id: string; type: string; readAt: string | null; createdAt: string; payload: { eventId: string; title: string; body: string } };
 
@@ -13,7 +13,7 @@ export default function NotificationsPage() {
     const token = getAccessToken();
     if (!token) { setNotice('Bildirimlerini görmek için giriş yapmalısın.'); return; }
     try {
-      const response = await fetch(`${apiUrl}/api/v1/notifications`, { headers: { authorization: `Bearer ${token}` } });
+      const response = await authenticatedFetch('/api/v1/notifications');
       if (!response.ok) throw new Error();
       setItems((await response.json() as { items: Notification[] }).items); setNotice('');
     } catch { setNotice('Bildirimlerin şu an yüklenemedi.'); }
@@ -21,7 +21,7 @@ export default function NotificationsPage() {
   async function openNotification(notification: Notification) {
     const token = getAccessToken();
     if (!notification.readAt && token) {
-      await fetch(`${apiUrl}/api/v1/notifications/${notification.id}/read`, { method: 'POST', headers: { authorization: `Bearer ${token}` } }).catch(() => undefined);
+      await authenticatedFetch(`/api/v1/notifications/${notification.id}/read`, { method: 'POST' }).catch(() => undefined);
       setItems((current) => current.map((item) => item.id === notification.id ? { ...item, readAt: new Date().toISOString() } : item));
       window.dispatchEvent(new Event('gatherly-notifications-updated'));
     }
