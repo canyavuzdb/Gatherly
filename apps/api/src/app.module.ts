@@ -15,6 +15,7 @@ import { MessagingNestModule } from './messaging/messaging.module';
 import { MediaNestModule } from './media/media.module';
 import { UsersNestModule } from './users/users.module';
 import { RealtimeNestModule } from './realtime/realtime.module';
+import { LocationSearchNestModule } from './location-search/location-search.module';
 
 @Module({
   imports: [
@@ -44,6 +45,7 @@ import { RealtimeNestModule } from './realtime/realtime.module';
     MessagingNestModule,
     MediaNestModule,
     AttendanceNestModule,
+    LocationSearchNestModule,
   ],
   controllers: [AppController],
 })
