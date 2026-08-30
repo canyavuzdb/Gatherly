@@ -2,8 +2,9 @@
 
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { useEffect, useState, type ReactNode } from 'react';
+import { useContext, useEffect, useState, type ReactNode } from 'react';
 import { accessTokenExpiresAt, apiUrl, authenticatedFetch, clearStoredSession, getAccessToken, getSessionIdentity, refreshSession } from '../../lib/api';
+import { AppShellContext } from './app-shell-context';
 
 type Profile = {
   firstName: string;
@@ -11,7 +12,13 @@ type Profile = {
   avatar: { mediaAssetId: string } | null;
 };
 
-export function AppSidebar({ children }: { children: ReactNode }) {
+export function AppSidebar({ children, persistent = false }: { children: ReactNode; persistent?: boolean }) {
+  const isNestedInApplicationShell = useContext(AppShellContext);
+  if (isNestedInApplicationShell && !persistent) return <>{children}</>;
+  return <StandaloneAppSidebar>{children}</StandaloneAppSidebar>;
+}
+
+function StandaloneAppSidebar({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -19,7 +26,6 @@ export function AppSidebar({ children }: { children: ReactNode }) {
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const [unreadNotificationCount, setUnreadNotificationCount] = useState(0);
   const [isGuestAccessPromptOpen, setIsGuestAccessPromptOpen] = useState(false);
-
   function endExpiredSession() {
     clearStoredSession();
     router.replace('/login');
