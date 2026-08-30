@@ -3,6 +3,7 @@ import {
   IsEnum,
   IsEmail,
   IsInt,
+  IsOptional,
   IsString,
   IsUrl,
   Matches,
@@ -54,6 +55,14 @@ class EnvironmentVariables {
 
   @IsEmail()
   SMTP_FROM = 'noreply@gatherly.local';
+
+  @IsOptional()
+  @IsString()
+  MAPTILER_API_KEY?: string;
+
+  @IsOptional()
+  @IsString()
+  OPENROUTESERVICE_API_KEY?: string;
 }
 
 export function validateEnvironment(config: Record<string, unknown>) {

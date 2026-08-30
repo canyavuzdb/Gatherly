@@ -35,6 +35,8 @@ services:
       SMTP_HOST: ${SMTP_HOST:-mailpit}
       SMTP_PORT: ${SMTP_PORT:-1025}
       SMTP_FROM: ${SMTP_FROM:-noreply@gatherly.local}
+      MAPTILER_API_KEY: ${MAPTILER_API_KEY:-}
+      OPENROUTESERVICE_API_KEY: ${OPENROUTESERVICE_API_KEY:-}
       MEDIA_STORAGE_PATH: /app/var/media
     ports: ["3001:3001"]
     volumes: ["media_data:/app/var/media"]
