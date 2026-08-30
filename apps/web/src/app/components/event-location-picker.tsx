@@ -5,19 +5,21 @@ import type { Map as MapLibreMap, Marker as MapLibreMarker } from 'maplibre-gl';
 import { authenticatedFetch, getAccessToken } from '../../lib/api';
 import { cityLabel } from '../../lib/cities';
 
-type Suggestion = { label: string; address: string; venueName: string | null; latitude: number; longitude: number };
+type Suggestion = { label: string; address: string; venueName: string | null; district?: string; latitude: number; longitude: number };
 type Coordinates = { latitude: number | null; longitude: number | null };
+type LocationSelection = Coordinates & Partial<Pick<Suggestion, 'address' | 'venueName' | 'district'>>;
 
 export function EventLocationPicker({ city, value, onChange, label = 'Haritada konum' }: {
   city: string;
   value: Coordinates;
-  onChange: (next: Coordinates & Partial<Pick<Suggestion, 'address' | 'venueName'>>) => void;
+  onChange: (next: LocationSelection) => void;
   label?: string;
 }) {
   const container = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const markerRef = useRef<MapLibreMarker | null>(null);
   const onChangeRef = useRef(onChange);
+  const reverseRequestRef = useRef(0);
   const [query, setQuery] = useState('');
   const [selectedQuery, setSelectedQuery] = useState('');
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
@@ -40,12 +42,12 @@ export function EventLocationPicker({ city, value, onChange, label = 'Haritada k
         attributionControl: false,
       });
       map.addControl(new NavigationControl({ showCompass: false }), 'top-right');
-      map.on('click', (event) => onChangeRef.current({ latitude: event.lngLat.lat, longitude: event.lngLat.lng }));
+      map.on('click', (event) => { void selectPoint(event.lngLat.lat, event.lngLat.lng); });
       mapRef.current = map;
       const marker = new Marker({ draggable: true, color: '#161616' });
       marker.on('dragend', () => {
         const next = marker.getLngLat();
-        onChangeRef.current({ latitude: next.lat, longitude: next.lng });
+        void selectPoint(next.lat, next.lng);
       });
       markerRef.current = marker;
     });
@@ -86,8 +88,24 @@ export function EventLocationPicker({ city, value, onChange, label = 'Haritada k
 
   function choose(suggestion: Suggestion) {
     setQuery(suggestion.label); setSelectedQuery(suggestion.label); setSuggestions([]); setSearchError('');
-    onChange({ latitude: suggestion.latitude, longitude: suggestion.longitude, address: suggestion.address, venueName: suggestion.venueName });
+    onChange({ latitude: suggestion.latitude, longitude: suggestion.longitude, address: suggestion.address, venueName: suggestion.venueName, district: suggestion.district });
     mapRef.current?.flyTo({ center: [suggestion.longitude, suggestion.latitude], zoom: 15, essential: true });
+  }
+
+  async function selectPoint(latitude: number, longitude: number) {
+    onChangeRef.current({ latitude, longitude });
+    const requestId = ++reverseRequestRef.current;
+    const token = getAccessToken();
+    if (!token) return;
+    try {
+      const params = new URLSearchParams({ latitude: String(latitude), longitude: String(longitude) });
+      const response = await authenticatedFetch(`/api/v1/locations/reverse?${params}`);
+      if (!response.ok) return;
+      const details = await response.json() as Omit<LocationSelection, 'latitude' | 'longitude'>;
+      if (requestId === reverseRequestRef.current) onChangeRef.current({ latitude, longitude, ...details });
+    } catch {
+      // Selecting a map point remains usable even when reverse geocoding is unavailable.
+    }
   }
 
   function clearLocation() {
