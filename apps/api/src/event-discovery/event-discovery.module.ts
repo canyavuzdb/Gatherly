@@ -2,16 +2,18 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import { AuthNestModule } from '../auth/auth.module';
+import { EventRoutingNestModule } from '../event-routing/event-routing.module';
+import { OpenRouteServiceEventRoutingImplementation } from '../event-routing/event-routing.implementation';
 import { AttendanceRecord, CategoryRecord, EventLocationRecord, EventRecord } from '../events/events.persistence';
 import { EventDiscoveryHttpController } from './event-discovery.http';
 import { EventDiscoveryImplementation } from './event-discovery.implementation';
 @Module({
-  imports: [AuthNestModule, TypeOrmModule.forFeature([EventRecord, EventLocationRecord, CategoryRecord, AttendanceRecord])],
+  imports: [AuthNestModule, EventRoutingNestModule, TypeOrmModule.forFeature([EventRecord, EventLocationRecord, CategoryRecord, AttendanceRecord])],
   controllers: [EventDiscoveryHttpController],
   providers: [{
     provide: EventDiscoveryImplementation,
-    inject: [DataSource],
-    useFactory: (dataSource: DataSource) => new EventDiscoveryImplementation(dataSource),
+    inject: [DataSource, OpenRouteServiceEventRoutingImplementation],
+    useFactory: (dataSource: DataSource, routing: OpenRouteServiceEventRoutingImplementation) => new EventDiscoveryImplementation(dataSource, undefined, routing),
   }],
 })
 export class EventDiscoveryNestModule {}

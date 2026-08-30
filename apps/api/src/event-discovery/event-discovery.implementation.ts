@@ -5,10 +5,15 @@ import { EventDiscoveryBusinessError } from './event-discovery.errors';
 import { InvitationRecord } from '../events/events.persistence';
 import { EventMediaRecord, MediaAssetRecord } from '../media/media.persistence';
 import { canonicalEventCity } from '../events/event-city';
+import type { EventRoutingModule } from '../event-routing/event-routing.interface';
 import type { CalendarEventCard, CalendarPage, DiscoverEvents, EventCard, EventDetail, EventDiscoveryModule, EventPage, OpenEvent, PersonalCalendar } from './event-discovery.interface';
 type Cursor = { startsAt: string; id: string; filter: string };
 export class EventDiscoveryImplementation implements EventDiscoveryModule {
-  constructor(private readonly dataSource: DataSource, private readonly now = () => new Date()) {}
+  constructor(
+    private readonly dataSource: DataSource,
+    private readonly now = () => new Date(),
+    private readonly routing: EventRoutingModule = { resolve: async () => null },
+  ) {}
   async discover(request: DiscoverEvents): Promise<EventPage> {
     const limit = request.limit ?? 20;
     if (!Number.isInteger(limit) || limit < 1 || limit > 50) throw new EventDiscoveryBusinessError('INVALID_PAGE_LIMIT');
@@ -20,7 +25,7 @@ export class EventDiscoveryImplementation implements EventDiscoveryModule {
     const query = this.dataSource.getRepository(EventRecord).createQueryBuilder('event')
       .innerJoin(EventLocationRecord, 'location', 'location.event_id = event.id')
       .innerJoin(CategoryRecord, 'category', 'category.id = event.category_id')
-      .select(['event.id AS id', 'event.title AS title', 'event.starts_at AS "startsAt"', 'event.ends_at AS "endsAt"', 'event.timezone AS timezone', 'event.status AS status', 'event.capacity AS capacity', 'event.confirmed_count AS "confirmedCount"', 'category.id AS "categoryId"', 'category.name AS "categoryName"', 'category.is_active AS "categoryIsActive"', 'location.city AS city', 'location.district AS district', 'location.venue_name AS "venueName"'])
+      .select(['event.id AS id', 'event.title AS title', 'event.starts_at AS "startsAt"', 'event.ends_at AS "endsAt"', 'event.timezone AS timezone', 'event.status AS status', 'event.capacity AS capacity', 'event.confirmed_count AS "confirmedCount"', 'category.id AS "categoryId"', 'category.name AS "categoryName"', 'category.is_active AS "categoryIsActive"', 'location.city AS city', 'location.district AS district', 'location.venue_name AS "venueName"', 'location.latitude AS latitude', 'location.longitude AS longitude', 'location.route_mode AS "routeMode"', 'location.address_visibility AS "addressVisibility"'])
       .addSelect((subquery) => subquery.select('cover.media_asset_id').from(EventMediaRecord, 'cover').innerJoin(MediaAssetRecord, 'coverAsset', "coverAsset.id = cover.media_asset_id AND coverAsset.status = 'READY'").where("cover.event_id = event.id AND cover.role = 'COVER'"), 'coverMediaAssetId')
       .where(scope === 'UPCOMING' ? 'event.status = :status' : "event.status IN ('PUBLISHED', 'CANCELLED', 'COMPLETED')", { status: 'PUBLISHED' }).andWhere('event.visibility = :visibility', { visibility: 'PUBLIC' }).andWhere(scope === 'UPCOMING' ? 'event.starts_at > :now' : 'event.starts_at <= :now', { now: this.now() }).andWhere('location.city = :city', { city });
     if (request.district?.trim()) query.andWhere('location.district = :district', { district: request.district.trim() });
@@ -55,7 +60,18 @@ export class EventDiscoveryImplementation implements EventDiscoveryModule {
     const participantPreview = organizer || attendance?.status === 'CONFIRMED' ? await this.participantPreview(event.id) : undefined;
     const participantRoster = organizer ? await this.participantRoster(event.id) : undefined;
     const organizerPreview = await this.organizerPreview(event.organizerId, organizer || attendance?.status === 'CONFIRMED');
-    return { ...card, status: event.status, description: event.description, visibility: event.visibility, joinPolicy: event.joinPolicy, ...(invitation?.status === 'PENDING' ? { invitationId: invitation.id } : {}), organizerPreview, ...(participantPreview ? { participantPreview } : {}), ...(participantRoster ? { participantRoster } : {}), isOrganizer: organizer, location: { ...card.location, address: addressVisible ? location.address : null }, galleryMediaAssetIds: galleryMedia.map((media) => media.mediaAssetId), canManageMedia: organizer && ['DRAFT', 'PUBLISHED'].includes(event.status) && event.startsAt > this.now(), joinAvailable: event.status === 'PUBLISHED' && event.startsAt > this.now() && Boolean(request.viewer) && hasJoinEligibility && (!attendance || attendance.status === 'CANCELLED' || attendance.status === 'REJECTED') };
+    const mapLocation = addressVisible && location.latitude !== null && location.longitude !== null ? { latitude: location.latitude, longitude: location.longitude } : undefined;
+    const routeDefinition = addressVisible && location.routeMode !== 'NONE' && location.latitude !== null && location.longitude !== null && location.routeEndLatitude !== null && location.routeEndLongitude !== null
+      ? { mode: location.routeMode, start: { latitude: location.latitude, longitude: location.longitude }, end: { latitude: location.routeEndLatitude, longitude: location.routeEndLongitude } }
+      : undefined;
+    const routePath = routeDefinition ? await this.routing.resolve(routeDefinition) : null;
+    const route = routeDefinition ? {
+      mode: routeDefinition.mode,
+      end: routeDefinition.end,
+      ...(routePath ? { geometry: routePath.coordinates, distanceMeters: routePath.distanceMeters, durationSeconds: routePath.durationSeconds } : {}),
+    } : undefined;
+    const { route: _routeSummary, ...detailCard } = card;
+    return { ...detailCard, status: event.status, description: event.description, visibility: event.visibility, joinPolicy: event.joinPolicy, ...(invitation?.status === 'PENDING' ? { invitationId: invitation.id } : {}), organizerPreview, ...(participantPreview ? { participantPreview } : {}), ...(participantRoster ? { participantRoster } : {}), ...(mapLocation ? { mapLocation } : {}), ...(route ? { route } : {}), isOrganizer: organizer, location: { ...card.location, address: addressVisible ? location.address : null }, galleryMediaAssetIds: galleryMedia.map((media) => media.mediaAssetId), canManageMedia: organizer && ['DRAFT', 'PUBLISHED'].includes(event.status) && event.startsAt > this.now(), joinAvailable: event.status === 'PUBLISHED' && event.startsAt > this.now() && Boolean(request.viewer) && hasJoinEligibility && (!attendance || attendance.status === 'CANCELLED' || attendance.status === 'REJECTED') };
   }
   async personalCalendar(request: PersonalCalendar): Promise<CalendarPage> {
     const limit = request.limit ?? 20;
@@ -67,7 +83,7 @@ export class EventDiscoveryImplementation implements EventDiscoveryModule {
     const rows = await this.dataSource.getRepository(EventRecord).createQueryBuilder('event')
       .innerJoin(EventLocationRecord, 'location', 'location.event_id = event.id').innerJoin(CategoryRecord, 'category', 'category.id = event.category_id')
       .leftJoin(AttendanceRecord, 'attendance', "attendance.event_id = event.id AND attendance.user_id = :userId AND attendance.status IN ('CONFIRMED','PENDING','WAITLISTED')", { userId: request.actor.userId })
-      .select(['event.id AS id', 'event.title AS title', 'event.starts_at AS "startsAt"', 'event.ends_at AS "endsAt"', 'event.timezone AS timezone', 'event.status AS status', 'event.capacity AS capacity', 'event.confirmed_count AS "confirmedCount"', 'category.id AS "categoryId"', 'category.name AS "categoryName"', 'category.is_active AS "categoryIsActive"', 'location.city AS city', 'location.district AS district', 'location.venue_name AS "venueName"', "CASE WHEN event.organizer_id = :userId THEN 'ORGANIZER' ELSE 'ATTENDEE' END AS relationship"])
+      .select(['event.id AS id', 'event.title AS title', 'event.starts_at AS "startsAt"', 'event.ends_at AS "endsAt"', 'event.timezone AS timezone', 'event.status AS status', 'event.capacity AS capacity', 'event.confirmed_count AS "confirmedCount"', 'category.id AS "categoryId"', 'category.name AS "categoryName"', 'category.is_active AS "categoryIsActive"', 'location.city AS city', 'location.district AS district', 'location.venue_name AS "venueName"', 'location.route_mode AS "routeMode"', "CASE WHEN event.organizer_id = :userId THEN 'ORGANIZER' ELSE 'ATTENDEE' END AS relationship"])
       .addSelect((subquery) => subquery.select('cover.media_asset_id').from(EventMediaRecord, 'cover').innerJoin(MediaAssetRecord, 'coverAsset', "coverAsset.id = cover.media_asset_id AND coverAsset.status = 'READY'").where("cover.event_id = event.id AND cover.role = 'COVER'"), 'coverMediaAssetId')
       .where(scope === 'UPCOMING' ? 'event.starts_at > :now' : 'event.starts_at <= :now', { now })
       .andWhere(scope === 'UPCOMING' ? "event.status IN ('DRAFT','PUBLISHED','CANCELLED')" : "event.status IN ('PUBLISHED','CANCELLED','COMPLETED')")
@@ -108,7 +124,7 @@ export class EventDiscoveryImplementation implements EventDiscoveryModule {
       return { userId: profile.userId, name, initials, ...(profile.avatarMediaAssetId ? { avatarMediaAssetId: profile.avatarMediaAssetId } : {}) };
     });
   }
-  private card(row: Record<string, unknown>): EventCard { const capacity = row.capacity === null ? { kind: 'UNLIMITED' as const } : { kind: 'LIMITED' as const, capacity: Number(row.capacity), confirmedCount: Number(row.confirmedCount), availableSeats: Number(row.capacity) - Number(row.confirmedCount) }; return { id: String(row.id), title: String(row.title), startsAt: new Date(String(row.startsAt)), endsAt: new Date(String(row.endsAt)), timezone: String(row.timezone), status: row.status as EventCard['status'], category: { id: String(row.categoryId), name: String(row.categoryName), isActive: Boolean(row.categoryIsActive) }, location: { city: String(row.city), district: String(row.district), venueName: row.venueName === null ? null : String(row.venueName) }, capacity, ...(row.coverMediaAssetId ? { coverMediaAssetId: String(row.coverMediaAssetId) } : {}), ...(row.ownAttendanceStatus ? { ownAttendanceStatus: row.ownAttendanceStatus as EventCard['ownAttendanceStatus'] } : {}) }; }
+  private card(row: Record<string, unknown>): EventCard { const capacity = row.capacity === null ? { kind: 'UNLIMITED' as const } : { kind: 'LIMITED' as const, capacity: Number(row.capacity), confirmedCount: Number(row.confirmedCount), availableSeats: Number(row.capacity) - Number(row.confirmedCount) }; const mapLocation = row.addressVisibility === 'EVENT_VIEWERS' && row.latitude !== null && row.longitude !== null ? { latitude: Number(row.latitude), longitude: Number(row.longitude) } : undefined; const route = row.routeMode && row.routeMode !== 'NONE' ? { mode: row.routeMode as NonNullable<EventCard['route']>['mode'] } : undefined; return { id: String(row.id), title: String(row.title), startsAt: new Date(String(row.startsAt)), endsAt: new Date(String(row.endsAt)), timezone: String(row.timezone), status: row.status as EventCard['status'], category: { id: String(row.categoryId), name: String(row.categoryName), isActive: Boolean(row.categoryIsActive) }, location: { city: String(row.city), district: String(row.district), venueName: row.venueName === null ? null : String(row.venueName) }, ...(mapLocation ? { mapLocation } : {}), ...(route ? { route } : {}), capacity, ...(row.coverMediaAssetId ? { coverMediaAssetId: String(row.coverMediaAssetId) } : {}), ...(row.ownAttendanceStatus ? { ownAttendanceStatus: row.ownAttendanceStatus as EventCard['ownAttendanceStatus'] } : {}) }; }
   private encodeCursor(cursor: Cursor) { return Buffer.from(JSON.stringify(cursor)).toString('base64url'); }
   private decodeCursor(value: string, filter: string): Cursor { try { const cursor = JSON.parse(Buffer.from(value, 'base64url').toString('utf8')) as Cursor; if (!cursor.startsAt || !cursor.id || cursor.filter !== filter || Number.isNaN(new Date(cursor.startsAt).getTime())) throw new Error(); return cursor; } catch { throw new EventDiscoveryBusinessError('INVALID_DISCOVERY_CURSOR'); } }
 }
