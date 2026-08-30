@@ -3,7 +3,8 @@
 import { useParams } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import { AppSidebar } from '../../components/app-sidebar';
-import { apiUrl, getAccessToken } from '../../../lib/api';
+import { EventDetailMap } from '../../components/event-detail-map';
+import { apiUrl, authenticatedFetch, getAccessToken } from '../../../lib/api';
 
 type EventDetail = {
   id: string;
@@ -24,6 +25,8 @@ type EventDetail = {
   isOrganizer: boolean;
   canManageMedia: boolean;
   location: { city: string; district: string; venueName: string | null; address: string | null };
+  mapLocation?: { latitude: number; longitude: number };
+  route?: { mode: 'WALKING' | 'CYCLING' | 'DRIVING'; end: { latitude: number; longitude: number }; geometry?: Array<[longitude: number, latitude: number]>; distanceMeters?: number; durationSeconds?: number };
   capacity: { kind: 'UNLIMITED' } | { kind: 'LIMITED'; availableSeats: number };
 };
 
@@ -40,10 +43,7 @@ export default function EventDetailPage() {
     setIsLoading(true);
     setNotice('');
     try {
-      const accessToken = getAccessToken();
-      const response = await fetch(`${apiUrl}/api/v1/events/${eventId}`, {
-        headers: accessToken ? { authorization: `Bearer ${accessToken}` } : undefined,
-      });
+      const response = await authenticatedFetch(`/api/v1/events/${eventId}`);
       if (!response.ok) throw new Error(response.status === 404 ? 'Etkinlik bulunamadı.' : 'Etkinlik yüklenemedi.');
       setEvent(await response.json() as EventDetail);
     } catch (error) {
@@ -69,9 +69,9 @@ export default function EventDetailPage() {
       const requestPath = event.invitationId
         ? `/api/v1/invitations/${event.invitationId}/accept`
         : `/api/v1/events/${event.id}${isFull ? '/waitlist' : '/rsvp'}`;
-      const response = await fetch(`${apiUrl}${requestPath}`, {
+      const response = await authenticatedFetch(requestPath, {
         method: 'POST',
-        headers: { authorization: `Bearer ${accessToken}`, 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json' },
         body: event.invitationId ? JSON.stringify({ ifFull: 'JOIN_WAITLIST' }) : isFull ? undefined : JSON.stringify({ waitlistOptIn: true }),
       });
       if (!response.ok) {
@@ -97,9 +97,8 @@ export default function EventDetailPage() {
     setIsSubmitting(true);
     setNotice('');
     try {
-      const response = await fetch(`${apiUrl}/api/v1/events/${event.id}/attendance/cancel`, {
+      const response = await authenticatedFetch(`/api/v1/events/${event.id}/attendance/cancel`, {
         method: 'POST',
-        headers: { authorization: `Bearer ${accessToken}` },
       });
       if (!response.ok) {
         const payload = await response.json().catch(() => null) as { message?: string } | null;
@@ -124,10 +123,10 @@ export default function EventDetailPage() {
       for (const file of Array.from(files).slice(0, role === 'COVER' ? 1 : 5)) {
         const formData = new FormData();
         formData.append('image', file);
-        const upload = await fetch(`${apiUrl}/api/v1/media/images`, { method: 'POST', headers: { authorization: `Bearer ${accessToken}` }, body: formData });
+        const upload = await authenticatedFetch('/api/v1/media/images', { method: 'POST', body: formData });
         if (!upload.ok) throw new Error('Görsel yüklenemedi.');
         const { mediaAsset } = await upload.json() as { mediaAsset: { id: string } };
-        const attach = await fetch(`${apiUrl}/api/v1/events/${event.id}/media`, { method: 'POST', headers: { authorization: `Bearer ${accessToken}`, 'content-type': 'application/json' }, body: JSON.stringify({ mediaAssetId: mediaAsset.id, role, altText: event.title }) });
+        const attach = await authenticatedFetch(`/api/v1/events/${event.id}/media`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ mediaAssetId: mediaAsset.id, role, altText: event.title }) });
         if (!attach.ok) throw new Error('Görsel etkinliğe eklenemedi.');
       }
       await load();
@@ -154,6 +153,7 @@ export default function EventDetailPage() {
         <div><dt>Kontenjan</dt><dd>{availability}</dd></div>
         {event.location.address && <div><dt>Adres</dt><dd>{event.location.address}</dd></div>}
       </dl>
+      {event.mapLocation && <EventDetailMap latitude={event.mapLocation.latitude} longitude={event.mapLocation.longitude} title={event.location.venueName ?? event.location.address ?? `${event.location.city} · ${event.location.district}`} route={event.route} />}
       <section className="event-organizer" aria-label="Etkinlik organizatörü"><div className={event.organizerPreview.kind === 'VISIBLE' ? 'participant-avatar' : 'participant-avatar is-anonymous'}>{<span>{event.organizerPreview.initials}</span>}{event.organizerPreview.kind === 'VISIBLE' && event.organizerPreview.avatarMediaAssetId && <img src={mediaUrl(event.organizerPreview.avatarMediaAssetId)} alt={event.organizerPreview.name} onError={(image) => { image.currentTarget.style.display = 'none'; }} />}</div><div><p className="auth-eyebrow">Organizatör</p><strong>{event.organizerPreview.kind === 'VISIBLE' ? event.organizerPreview.name : 'Gizli profil'}</strong></div></section>
       {event.participantPreview && <section className="event-participants" aria-labelledby="event-participants-title"><div className="event-participants-header"><div><p className="auth-eyebrow">Katılımcılar</p><h2 id="event-participants-title">Birlikte katılanlar</h2></div><span>{event.capacity.kind === 'LIMITED' ? `${event.capacity.availableSeats} yer kaldı` : 'Sınırsız kontenjan'}</span></div><div className="participant-avatars">{event.participantPreview.map((participant, index) => <div className={participant.kind === 'VISIBLE' ? 'participant-avatar' : 'participant-avatar is-anonymous'} title={participant.kind === 'VISIBLE' ? participant.name : 'Gizli profil'} key={participant.kind === 'VISIBLE' ? participant.userId : `anonymous-${index}`}><span>{participant.initials}</span>{participant.kind === 'VISIBLE' && participant.avatarMediaAssetId && <img src={mediaUrl(participant.avatarMediaAssetId)} alt={participant.name} onError={(image) => { image.currentTarget.style.display = 'none'; }} />}</div>)}</div>{event.isOrganizer && event.participantRoster && <button className="participant-directory-link" type="button" onClick={() => setIsParticipantDirectoryOpen(true)}>Tümünü gör <span>{event.participantRoster.length} kişi</span><b aria-hidden="true">→</b></button>}</section>}
       {event.galleryMediaAssetIds.length > 0 && <section className="event-detail-gallery" aria-label="Etkinlik görselleri">{event.galleryMediaAssetIds.map((mediaAssetId, index) => <img src={mediaUrl(mediaAssetId)} alt={`${event.title} görseli ${index + 1}`} onError={(image) => { image.currentTarget.style.display = 'none'; }} key={mediaAssetId} />)}</section>}

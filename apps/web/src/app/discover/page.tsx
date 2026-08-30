@@ -4,8 +4,10 @@ import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 import { AppSidebar } from '../components/app-sidebar';
 import { CityPicker } from '../components/city-picker';
-import { apiUrl, getAccessToken } from '../../lib/api';
+import { EventMap } from '../components/event-map';
+import { apiUrl, authenticatedFetch } from '../../lib/api';
 import { categoryToneClass } from '../lib/category-tone';
+import { routeSummaryLabel, type RouteSummary } from '../lib/route-summary';
 
 type EventCard = {
   id: string;
@@ -15,15 +17,20 @@ type EventCard = {
   location: { city: string; district: string; venueName: string | null };
   capacity: { kind: 'UNLIMITED' } | { kind: 'LIMITED'; capacity: number; confirmedCount: number; availableSeats: number };
   coverMediaAssetId?: string;
+  route?: RouteSummary;
+  mapLocation?: { latitude: number; longitude: number };
 };
 
 type DiscoveryPage = { items: EventCard[]; activeCategories: Array<{ id: string; name: string }> };
 type Scope = 'UPCOMING' | 'PAST';
+type ViewMode = 'FEED' | 'MAP';
 
 export default function DiscoverPage() {
   const [city, setCity] = useState('Istanbul');
   const [categoryId, setCategoryId] = useState<string | null>(null);
   const [scope, setScope] = useState<Scope>('UPCOMING');
+  const [viewMode, setViewMode] = useState<ViewMode>('FEED');
+  const [selectedMapEventId, setSelectedMapEventId] = useState<string | null>(null);
   const [events, setEvents] = useState<EventCard[]>([]);
   const [categories, setCategories] = useState<DiscoveryPage['activeCategories']>([]);
   const [notice, setNotice] = useState('');
@@ -33,12 +40,9 @@ export default function DiscoverPage() {
     setIsLoading(true);
     setNotice('');
     try {
-      const accessToken = getAccessToken();
       const query = new URLSearchParams({ city: targetCity, scope: targetScope, limit: '50' });
       if (targetCategory) query.set('categoryId', targetCategory);
-      const response = await fetch(`${apiUrl}/api/v1/events?${query.toString()}`, {
-        headers: accessToken ? { authorization: `Bearer ${accessToken}` } : undefined,
-      });
+      const response = await authenticatedFetch(`/api/v1/events?${query.toString()}`);
       if (!response.ok) throw new Error('Etkinlikler şu an yüklenemedi.');
       const page = await response.json() as DiscoveryPage;
       setEvents(page.items);
@@ -53,6 +57,7 @@ export default function DiscoverPage() {
   useEffect(() => { void loadEvents('Istanbul', null, 'UPCOMING'); }, []);
 
   const days = useMemo(() => groupByDay(events), [events]);
+  const selectedMapEvent = events.find((event) => event.id === selectedMapEventId);
 
   function selectCity(selectedCity: string) {
     setCity(selectedCity);
@@ -77,29 +82,29 @@ export default function DiscoverPage() {
           <CityPicker value={city} onValueChange={selectCity} isLoading={isLoading} />
         </header>
         <div className="discover-filters" aria-label="Etkinlik filtreleri">
-          <div className="my-events-tabs" role="tablist" aria-label="Etkinlik zaman aralığı"><button className={scope === 'UPCOMING' ? 'is-active' : ''} type="button" role="tab" aria-selected={scope === 'UPCOMING'} onClick={() => selectScope('UPCOMING')} disabled={isLoading}>Yaklaşan</button><button className={scope === 'PAST' ? 'is-active' : ''} type="button" role="tab" aria-selected={scope === 'PAST'} onClick={() => selectScope('PAST')} disabled={isLoading}>Geçmiş</button></div>
-          <div className="discover-category-strip" role="list" aria-label="Kategoriler">
-            <button className={categoryId === null ? 'is-selected' : ''} type="button" onClick={() => selectCategory(null)} disabled={isLoading}>Tümü</button>
-            {categories.map((category) => <button className={categoryId === category.id ? 'is-selected' : ''} type="button" onClick={() => selectCategory(category.id)} disabled={isLoading} key={category.id}>{category.name}</button>)}
-          </div>
-          <p>{isLoading ? 'Etkinlikler yenileniyor…' : `${events.length} ${scope === 'UPCOMING' ? 'yaklaşan' : 'geçmiş'} etkinlik`}</p>
+          <ScopePicker scope={scope} count={events.length} isLoading={isLoading} onSelect={selectScope} />
+          <div className="discover-filter-actions"><label className="discover-category-select"><span>Kategori</span><select value={categoryId ?? ''} onChange={(event) => selectCategory(event.target.value || null)} disabled={isLoading}><option value="">Tüm kategoriler</option>{categories.map((category) => <option value={category.id} key={category.id}>{category.name}</option>)}</select></label><button className="discover-map-toggle" type="button" aria-pressed={viewMode === 'MAP'} onClick={() => setViewMode(viewMode === 'FEED' ? 'MAP' : 'FEED')}>{viewMode === 'MAP' ? 'Akışa dön' : 'Haritada gör'} <span aria-hidden="true">{viewMode === 'MAP' ? '→' : '↗'}</span></button></div>
         </div>
         {notice && <p className="form-note" role="alert">{notice}</p>}
         {!isLoading && !notice && events.length === 0 && <p className="empty-state">Bu şehirde {scope === 'UPCOMING' ? 'yaklaşan' : 'geçmiş'} Public etkinlik bulunmuyor.</p>}
-        <div className="discover-feed">
+        {viewMode === 'MAP' ? <div className="discover-map-view"><EventMap events={events} onEventSelect={setSelectedMapEventId} />{selectedMapEvent && <DiscoverEvent event={selectedMapEvent} />}</div> : <div className="discover-feed">
           {days.map((day) => <section className="discover-day" key={day.key}><h2>{formatDay(day.date)}</h2><div>{day.items.map((event) => <DiscoverEvent event={event} key={event.id} />)}</div></section>)}
-        </div>
+        </div>}
       </section>
     </AppSidebar>
   );
 }
 
+function ScopePicker({ scope, count, isLoading, onSelect }: { scope: Scope; count: number; isLoading: boolean; onSelect: (scope: Scope) => void }) {
+  return <div className="content-scope" role="tablist" aria-label="Etkinlik zaman aralığı"><button className={scope === 'UPCOMING' ? 'is-active' : ''} type="button" role="tab" aria-selected={scope === 'UPCOMING'} onClick={() => onSelect('UPCOMING')} disabled={isLoading}>Yaklaşan{scope === 'UPCOMING' && <small>{count}</small>}</button><button className={scope === 'PAST' ? 'is-active' : ''} type="button" role="tab" aria-selected={scope === 'PAST'} onClick={() => onSelect('PAST')} disabled={isLoading}>Geçmiş{scope === 'PAST' && <small>{count}</small>}</button></div>;
+}
+
 function DiscoverEvent({ event }: { event: EventCard }) {
   const location = event.location.venueName ?? `${event.location.city} · ${event.location.district}`;
   const capacity = event.capacity.kind === 'UNLIMITED' ? 'Katılım açık' : `${event.capacity.availableSeats} yer kaldı`;
+  const routeSummary = routeSummaryLabel(event.route);
   return <Link className="discover-event" href={`/events/${event.id}`}>
-    <time>{formatTime(event.startsAt)}</time><i className={categoryToneClass(event.category.name)} aria-hidden="true" /><span className="discover-event-copy"><small>{event.category.name}</small><strong>{event.title}</strong><em>{location} · {capacity}</em></span>
-    {event.coverMediaAssetId && <img src={`${apiUrl}/api/v1/media/${event.coverMediaAssetId}`} alt="" onError={(image) => { image.currentTarget.style.display = 'none'; }} />}<b aria-hidden="true">↗</b>
+    <time>{formatTime(event.startsAt)}</time><i className={categoryToneClass(event.category.name)} aria-hidden="true" /><span className="discover-event-content">{event.coverMediaAssetId && <img src={`${apiUrl}/api/v1/media/${event.coverMediaAssetId}`} alt="" onError={(image) => { image.currentTarget.style.display = 'none'; }} />}<span className="discover-event-copy"><small>{event.category.name}</small><strong>{event.title}</strong><em>{location} · {capacity}</em>{routeSummary && <span className="event-route-summary">↗ {routeSummary}</span>}</span></span><b aria-hidden="true">↗</b>
   </Link>;
 }
 
