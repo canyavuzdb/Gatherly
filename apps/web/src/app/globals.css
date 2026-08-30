@@ -490,6 +490,15 @@ textarea {
   font-weight: 600;
 }
 
+.field-label.is-required::after {
+  margin-left: 4px;
+  color: var(--muted);
+  content: '*';
+  font-size: 11px;
+  font-weight: 650;
+  vertical-align: top;
+}
+
 .field-label-row { display: flex; align-items: baseline; justify-content: space-between; }
 .field-label-row small { color: var(--muted); font-size: 11px; font-weight: 500; }
 
@@ -503,6 +512,42 @@ textarea {
   background: rgba(255, 255, 255, 0.95);
   color: var(--ink);
   transition: border-color 150ms ease, box-shadow 150ms ease;
+}
+
+/* Textareas need real vertical padding; the shared control height is for single-line fields. */
+textarea.field-input {
+  height: auto;
+  min-height: 110px;
+  padding: 14px;
+  line-height: 1.45;
+}
+
+/* A short event description should sit optically centred in its larger composer. */
+textarea.field-input.event-create-description {
+  min-height: 110px;
+  padding: 20px 14px 13px;
+}
+
+/* Keep the deliberately centred biography field independent from the shared textarea rule. */
+.field-input.settings-textarea {
+  height: 92px;
+  min-height: 92px;
+  padding: 25px 14px 0;
+  line-height: 1.35;
+}
+
+/* Normalise native select controls so their label and chevron share the same vertical rhythm. */
+select.field-input {
+  appearance: none;
+  height: 49px;
+  padding: 0 42px 0 14px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='m3 6 5 5 5-5' fill='none' stroke='%23171717' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.7'/%3E%3C/svg%3E");
+  background-position: right 15px center;
+  background-repeat: no-repeat;
+  background-size: 12px 12px;
+  cursor: pointer;
+  line-height: 1.2;
+  vertical-align: middle;
 }
 
 .field-input::placeholder {
