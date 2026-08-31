@@ -31,6 +31,12 @@ export class AttendanceHttpController {
     return this.withActor(authorization, (actorUserId) => this.attendance.decide({ kind: 'CANCEL_ATTENDANCE', eventId, actorUserId }));
   }
 
+  @Post('events/:eventId/attendance/maybe')
+  @HttpCode(HttpStatus.OK)
+  async maybe(@Headers('authorization') authorization: string | undefined, @Param('eventId') eventId: string) {
+    return this.withActor(authorization, (actorUserId) => this.attendance.decide({ kind: 'MARK_ATTENDANCE_MAYBE', eventId, actorUserId }));
+  }
+
   @Post('events/:eventId/attendances/:attendanceId/decision')
   async decide(@Headers('authorization') authorization: string | undefined, @Param('eventId') eventId: string, @Param('attendanceId') attendanceId: string, @Body() request: DecisionRequest) {
     return this.withActor(authorization, (actorUserId) => this.attendance.decide({ kind: 'DECIDE_ATTENDANCE', eventId, attendanceId, actorUserId, decision: request.decision, rejectionReason: request.rejectionReason }));

@@ -17,7 +17,7 @@ export class CreateEventDraftTables1766800000000 implements MigrationInterface {
       "CREATE TYPE address_visibility AS ENUM ('EVENT_VIEWERS', 'CONFIRMED_ATTENDEES')",
     );
     await queryRunner.query(
-      "CREATE TYPE attendance_status AS ENUM ('PENDING', 'CONFIRMED', 'WAITLISTED', 'REJECTED', 'CANCELLED')",
+      "CREATE TYPE attendance_status AS ENUM ('PENDING', 'CONFIRMED', 'WAITLISTED', 'REJECTED', 'CANCELLED', 'MAYBE')",
     );
     await queryRunner.query(`
       CREATE TABLE categories (

@@ -4,12 +4,13 @@ import { AttendanceRecord, EventRecord, InvitationRecord } from '../events/event
 import { MessagingImplementation } from '../messaging/messaging.implementation';
 import type { RealtimeModule } from '../realtime/realtime.interface';
 import { AttendanceBusinessError } from './attendance.errors';
-import type { AcceptInvitation, AttendanceModule, AttendanceOutcome, CancelAttendance, DecideAttendance, EnrollWaitlist, RequestAttendance } from './attendance.interface';
+import type { AcceptInvitation, AttendanceModule, AttendanceOutcome, CancelAttendance, DecideAttendance, EnrollWaitlist, MarkAttendanceMaybe, RequestAttendance } from './attendance.interface';
 export class AttendanceImplementation implements AttendanceModule {
   constructor(private readonly dataSource: DataSource, private readonly now = () => new Date(), private readonly messaging?: MessagingImplementation, private readonly realtime?: RealtimeModule) {}
-  async decide(command: RequestAttendance | EnrollWaitlist | CancelAttendance | DecideAttendance | AcceptInvitation): Promise<AttendanceOutcome> {
+  async decide(command: RequestAttendance | EnrollWaitlist | CancelAttendance | MarkAttendanceMaybe | DecideAttendance | AcceptInvitation): Promise<AttendanceOutcome> {
     if (command.kind === 'ENROLL_WAITLIST') return this.emitUserChange(command.eventId, await this.enrollWaitlist(command));
     if (command.kind === 'CANCEL_ATTENDANCE') return this.emitUserChange(command.eventId, await this.cancelAttendance(command));
+    if (command.kind === 'MARK_ATTENDANCE_MAYBE') return this.emitUserChange(command.eventId, await this.markMaybe(command));
     if (command.kind === 'DECIDE_ATTENDANCE') { const outcome = await this.decideAttendance(command); await this.publishDecision(command, outcome); return this.emitUserChange(command.eventId, outcome); }
     if (command.kind === 'ACCEPT_INVITATION') { const outcome = await this.acceptInvitation(command); if (outcome.attendance.status === 'PENDING') { const attendance = await this.dataSource.getRepository(AttendanceRecord).findOneBy({ id: outcome.attendance.id }); if (attendance) await this.publishPendingRequest(attendance.eventId, outcome); } return outcome; }
     const outcome = await this.dataSource.transaction(async (manager) => {
@@ -18,7 +19,7 @@ export class AttendanceImplementation implements AttendanceModule {
       const user = await manager.findOneBy(UserRecord, { id: command.actorUserId });
       if (!user || user.status !== 'ACTIVE' || !user.emailVerifiedAt) throw new AttendanceBusinessError('ACTOR_NOT_ACTIVE');
       const existing = await manager.findOneBy(AttendanceRecord, { eventId: event.id, userId: user.id });
-      if (existing && existing.status !== 'CANCELLED') {
+      if (existing && existing.status !== 'CANCELLED' && existing.status !== 'MAYBE') {
         if (existing.status === 'REJECTED') throw new AttendanceBusinessError('INVALID_ATTENDANCE_TRANSITION');
         return this.outcome(existing, event, existing.status);
       }
@@ -37,7 +38,7 @@ export class AttendanceImplementation implements AttendanceModule {
   }
   private async emitUserChange(eventId: string, outcome: AttendanceOutcome) {
     await this.realtime?.emit({ kind: 'USER_EVENT_CHANGED', recipientUserId: outcome.attendance.userId, eventId, change: 'ATTENDANCE' });
-    if (outcome.attendance.status === 'CONFIRMED' || outcome.attendance.status === 'CANCELLED') {
+    if (outcome.attendance.status === 'CONFIRMED' || outcome.attendance.status === 'CANCELLED' || outcome.attendance.status === 'MAYBE') {
       const event = await this.dataSource.getRepository(EventRecord).findOneBy({ id: eventId });
       if (event?.status === 'PUBLISHED' && event.visibility === 'PUBLIC') {
         await this.realtime?.emit({ kind: 'PUBLIC_EVENT_CHANGED', eventId, change: 'CAPACITY' });
@@ -56,7 +57,7 @@ export class AttendanceImplementation implements AttendanceModule {
       const event = await manager.findOne(EventRecord, { where: { id: invitation.eventId }, lock: { mode: 'pessimistic_write' } });
       if (!event || event.status !== 'PUBLISHED' || event.startsAt <= this.now()) throw new AttendanceBusinessError('EVENT_NOT_JOINABLE');
       const existing = await manager.findOneBy(AttendanceRecord, { eventId: event.id, userId: user.id });
-      if (existing && existing.status !== 'CANCELLED' && existing.status !== 'REJECTED') throw new AttendanceBusinessError('INVALID_ATTENDANCE_TRANSITION');
+      if (existing && existing.status !== 'CANCELLED' && existing.status !== 'MAYBE' && existing.status !== 'REJECTED') throw new AttendanceBusinessError('INVALID_ATTENDANCE_TRANSITION');
       const full = event.capacity !== null && event.confirmedCount >= event.capacity;
       if (full && command.ifFull === 'REJECT') throw new AttendanceBusinessError('EVENT_AT_CAPACITY');
       const status = event.joinPolicy === 'APPROVAL_REQUIRED' ? 'PENDING' : full ? 'WAITLISTED' : 'CONFIRMED';
@@ -108,10 +109,39 @@ export class AttendanceImplementation implements AttendanceModule {
     });
   }
 
+  private async markMaybe(command: MarkAttendanceMaybe): Promise<AttendanceOutcome> {
+    const result = await this.dataSource.transaction(async (manager) => {
+      const event = await manager.findOne(EventRecord, { where: { id: command.eventId }, lock: { mode: 'pessimistic_write' } });
+      if (!event || event.status !== 'PUBLISHED' || event.startsAt <= this.now()) throw new AttendanceBusinessError('EVENT_NOT_JOINABLE');
+      const user = await manager.findOneBy(UserRecord, { id: command.actorUserId });
+      if (!user || user.status !== 'ACTIVE' || !user.emailVerifiedAt) throw new AttendanceBusinessError('ACTOR_NOT_ACTIVE');
+      const row = await manager.findOneBy(AttendanceRecord, { eventId: event.id, userId: user.id });
+      const invitation = await manager.findOneBy(InvitationRecord, { eventId: event.id, recipientUserId: user.id, status: 'PENDING' });
+      if (event.joinPolicy === 'INVITE_ONLY' && !row && !invitation) throw new AttendanceBusinessError('EVENT_NOT_JOINABLE');
+      if (row?.status === 'REJECTED') throw new AttendanceBusinessError('INVALID_ATTENDANCE_TRANSITION');
+      if (row?.status === 'MAYBE') return { outcome: this.outcome(row, event, 'MAYBE'), promoted: null };
+      const now = this.now();
+      const wasConfirmed = row?.status === 'CONFIRMED';
+      const maybe = row
+        ? await manager.save(Object.assign(row, { status: 'MAYBE' as const, waitlistOptIn: false, requestedAt: now, waitlistedAt: null, confirmedAt: null, rejectedAt: null, rejectionReason: null, cancelledAt: null, updatedByUserId: user.id, updatedByKind: 'USER' as const, version: row.version + 1 }))
+        : await manager.save(manager.create(AttendanceRecord, { eventId: event.id, userId: user.id, status: 'MAYBE', waitlistOptIn: false, requestedAt: now, waitlistedAt: null, confirmedAt: null, rejectedAt: null, rejectionReason: null, cancelledAt: null, updatedByUserId: user.id, updatedByKind: 'USER', version: 1 }));
+      if (wasConfirmed) event.confirmedCount -= 1;
+      let promoted: AttendanceRecord | null = null;
+      if (wasConfirmed && event.joinPolicy === 'OPEN' && (event.capacity === null || event.confirmedCount < event.capacity)) {
+        const next = await manager.findOne(AttendanceRecord, { where: { eventId: event.id, status: 'WAITLISTED' }, order: { waitlistedAt: 'ASC', id: 'ASC' }, lock: { mode: 'pessimistic_write' } });
+        if (next) { next.status = 'CONFIRMED'; next.confirmedAt = now; next.version += 1; await manager.save(next); event.confirmedCount += 1; promoted = next; }
+      }
+      if (wasConfirmed) await manager.save(event);
+      return { outcome: this.outcome(maybe, event, 'MAYBE'), promoted };
+    });
+    if (result.promoted) await this.publishPromotion(command.eventId, result.promoted);
+    return result.outcome;
+  }
+
   private outcome(row: AttendanceRecord, event: EventRecord, status: AttendanceOutcome['attendance']['status']): AttendanceOutcome {
     return { attendance: { id: row.id, userId: row.userId, status, version: row.version }, capacity: { capacity: event.capacity, confirmedCount: event.confirmedCount, availableCount: event.capacity === null ? null : event.capacity - event.confirmedCount } };
   }
-  private async cancelAttendance(command: CancelAttendance): Promise<AttendanceOutcome> { const result = await this.dataSource.transaction(async (manager) => { const event = await manager.findOne(EventRecord, { where: { id: command.eventId }, lock: { mode: 'pessimistic_write' } }); if (!event) throw new AttendanceBusinessError('EVENT_NOT_JOINABLE'); if (event.organizerId === command.actorUserId) throw new AttendanceBusinessError('FORBIDDEN'); const row = await manager.findOneBy(AttendanceRecord, { eventId: event.id, userId: command.actorUserId }); if (!row) throw new AttendanceBusinessError('INVALID_ATTENDANCE_TRANSITION'); if (row.status === 'CANCELLED') return { outcome: this.outcome(row, event, 'CANCELLED'), promoted: null }; if (row.status !== 'CONFIRMED' && (event.startsAt <= this.now() || (row.status !== 'PENDING' && row.status !== 'WAITLISTED'))) throw new AttendanceBusinessError('INVALID_ATTENDANCE_TRANSITION'); row.status = 'CANCELLED'; row.cancelledAt = this.now(); row.version += 1; row.updatedByUserId = command.actorUserId; await manager.save(row); if (row.confirmedAt) event.confirmedCount -= 1; let promoted: AttendanceRecord | null = null; if (event.status === 'PUBLISHED' && event.joinPolicy === 'OPEN' && event.startsAt > this.now() && row.confirmedAt) { const next = await manager.findOne(AttendanceRecord, { where: { eventId: event.id, status: 'WAITLISTED' }, order: { waitlistedAt: 'ASC', id: 'ASC' }, lock: { mode: 'pessimistic_write' } }); if (next && (event.capacity === null || event.confirmedCount < event.capacity)) { next.status = 'CONFIRMED'; next.confirmedAt = this.now(); next.version += 1; await manager.save(next); event.confirmedCount += 1; promoted = next; } } await manager.save(event); return { outcome: this.outcome(row, event, 'CANCELLED'), promoted }; }); if (result.promoted) await this.publishPromotion(command.eventId, result.promoted); return result.outcome; }
+  private async cancelAttendance(command: CancelAttendance): Promise<AttendanceOutcome> { const result = await this.dataSource.transaction(async (manager) => { const event = await manager.findOne(EventRecord, { where: { id: command.eventId }, lock: { mode: 'pessimistic_write' } }); if (!event) throw new AttendanceBusinessError('EVENT_NOT_JOINABLE'); if (event.organizerId === command.actorUserId) throw new AttendanceBusinessError('FORBIDDEN'); const row = await manager.findOneBy(AttendanceRecord, { eventId: event.id, userId: command.actorUserId }); if (!row) { if (event.status !== 'PUBLISHED' || event.startsAt <= this.now()) throw new AttendanceBusinessError('EVENT_NOT_JOINABLE'); const now = this.now(); const declined = await manager.save(manager.create(AttendanceRecord, { eventId: event.id, userId: command.actorUserId, status: 'CANCELLED', waitlistOptIn: false, requestedAt: now, waitlistedAt: null, confirmedAt: null, rejectedAt: null, rejectionReason: null, cancelledAt: now, updatedByUserId: command.actorUserId, updatedByKind: 'USER', version: 1 })); return { outcome: this.outcome(declined, event, 'CANCELLED'), promoted: null }; } if (row.status === 'CANCELLED') return { outcome: this.outcome(row, event, 'CANCELLED'), promoted: null }; if (row.status !== 'CONFIRMED' && row.status !== 'MAYBE' && (event.startsAt <= this.now() || (row.status !== 'PENDING' && row.status !== 'WAITLISTED'))) throw new AttendanceBusinessError('INVALID_ATTENDANCE_TRANSITION'); row.status = 'CANCELLED'; row.cancelledAt = this.now(); row.version += 1; row.updatedByUserId = command.actorUserId; await manager.save(row); if (row.confirmedAt) event.confirmedCount -= 1; let promoted: AttendanceRecord | null = null; if (event.status === 'PUBLISHED' && event.joinPolicy === 'OPEN' && event.startsAt > this.now() && row.confirmedAt) { const next = await manager.findOne(AttendanceRecord, { where: { eventId: event.id, status: 'WAITLISTED' }, order: { waitlistedAt: 'ASC', id: 'ASC' }, lock: { mode: 'pessimistic_write' } }); if (next && (event.capacity === null || event.confirmedCount < event.capacity)) { next.status = 'CONFIRMED'; next.confirmedAt = this.now(); next.version += 1; await manager.save(next); event.confirmedCount += 1; promoted = next; } } await manager.save(event); return { outcome: this.outcome(row, event, 'CANCELLED'), promoted }; }); if (result.promoted) await this.publishPromotion(command.eventId, result.promoted); return result.outcome; }
   private async publishPromotion(eventId: string, attendance: AttendanceRecord) { if (!this.messaging) return; await this.messaging.publish([{ messageId: `attendance:${attendance.id}:${attendance.version}`, eventName: 'attendance.promoted.v1', eventVersion: 1, occurredAt: this.now(), correlationId: attendance.id, payload: { recipientUserId: attendance.userId, eventId, title: 'You are in!', body: 'A place opened up and your attendance was confirmed.' } }]); }
   private async enrollWaitlist(command: EnrollWaitlist): Promise<AttendanceOutcome> {
     return this.dataSource.transaction(async (manager) => {
@@ -121,7 +151,7 @@ export class AttendanceImplementation implements AttendanceModule {
       if (!user || user.status !== 'ACTIVE' || !user.emailVerifiedAt) throw new AttendanceBusinessError('ACTOR_NOT_ACTIVE');
       if (event.capacity === null || event.confirmedCount < event.capacity) throw new AttendanceBusinessError('WAITLIST_UNAVAILABLE');
       const existing = await manager.findOneBy(AttendanceRecord, { eventId: event.id, userId: user.id });
-      if (existing && existing.status !== 'CANCELLED') return this.outcome(existing, event, existing.status);
+      if (existing && existing.status !== 'CANCELLED' && existing.status !== 'MAYBE') return this.outcome(existing, event, existing.status);
       const now = this.now();
       const row = existing
         ? await manager.save(Object.assign(existing, { status: 'WAITLISTED', waitlistOptIn: true, requestedAt: now, waitlistedAt: now, confirmedAt: null, rejectedAt: null, rejectionReason: null, cancelledAt: null, updatedByUserId: user.id, updatedByKind: 'USER', version: existing.version + 1 }))

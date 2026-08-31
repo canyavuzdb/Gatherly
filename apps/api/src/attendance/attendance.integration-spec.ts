@@ -24,6 +24,25 @@ describe('AttendanceModule request', () => {
     expect(publishedFacts).toEqual([expect.objectContaining({ eventName: 'attendance.promoted.v1', payload: expect.objectContaining({ recipientUserId: secondGuest, eventId: event }) })]);
     await expect(attendance.decide({ kind: 'CANCEL_ATTENDANCE', eventId: event, actorUserId: guest })).resolves.toMatchObject({ attendance: { userId: guest, status: 'CANCELLED' }, capacity: { confirmedCount: 2, availableCount: 0 } });
   });
+  it('treats a guest decline as a reversible decision that does not consume capacity', async () => {
+    const [organizer, guest, category, event] = ['a1111111-1111-4111-8111-111111111111','a2222222-2222-4222-8222-222222222222','a3333333-3333-4333-8333-333333333333','a4444444-4444-4444-8444-444444444444'];
+    await dataSource.query("INSERT INTO users (id,email,password_hash,email_verified_at,status) VALUES ($1,'decline-organizer@example.test','x',now(),'ACTIVE'),($2,'decline-guest@example.test','x',now(),'ACTIVE')", [organizer, guest]);
+    await dataSource.query("INSERT INTO categories (id,name,slug,updated_by_kind) VALUES ($1,'Wellbeing','wellbeing','SYSTEM')", [category]);
+    await dataSource.query("INSERT INTO events (id,organizer_id,category_id,title,description,starts_at,ends_at,timezone,capacity,confirmed_count,visibility,join_policy,status,created_by_user_id,updated_by_kind) VALUES ($1,$2,$3,'Walk','Fresh air','2026-09-01T18:00:00Z','2026-09-01T20:00:00Z','Europe/Istanbul',1,0,'PUBLIC','OPEN','PUBLISHED',$2,'USER')", [event, organizer, category]);
+
+    await expect(attendance.decide({ kind: 'CANCEL_ATTENDANCE', eventId: event, actorUserId: guest })).resolves.toMatchObject({ attendance: { userId: guest, status: 'CANCELLED' }, capacity: { confirmedCount: 0, availableCount: 1 } });
+    await expect(attendance.decide({ kind: 'REQUEST_ATTENDANCE', eventId: event, actorUserId: guest, waitlistOptIn: true })).resolves.toMatchObject({ attendance: { userId: guest, status: 'CONFIRMED' }, capacity: { confirmedCount: 1, availableCount: 0 } });
+    await expect(attendance.decide({ kind: 'CANCEL_ATTENDANCE', eventId: event, actorUserId: guest })).resolves.toMatchObject({ attendance: { userId: guest, status: 'CANCELLED' }, capacity: { confirmedCount: 0, availableCount: 1 } });
+  });
+  it('lets a maybe response change to not attending without consuming capacity', async () => {
+    const [organizer, guest, category, event] = ['b1111111-1111-4111-8111-111111111111','b2222222-2222-4222-8222-222222222222','b3333333-3333-4333-8333-333333333333','b4444444-4444-4444-8444-444444444444'];
+    await dataSource.query("INSERT INTO users (id,email,password_hash,email_verified_at,status) VALUES ($1,'maybe-organizer@example.test','x',now(),'ACTIVE'),($2,'maybe-guest@example.test','x',now(),'ACTIVE')", [organizer, guest]);
+    await dataSource.query("INSERT INTO categories (id,name,slug,updated_by_kind) VALUES ($1,'Social','social','SYSTEM')", [category]);
+    await dataSource.query("INSERT INTO events (id,organizer_id,category_id,title,description,starts_at,ends_at,timezone,capacity,confirmed_count,visibility,join_policy,status,created_by_user_id,updated_by_kind) VALUES ($1,$2,$3,'Coffee','Catch up','2026-09-01T18:00:00Z','2026-09-01T20:00:00Z','Europe/Istanbul',1,0,'PUBLIC','OPEN','PUBLISHED',$2,'USER')", [event, organizer, category]);
+
+    await expect(attendance.decide({ kind: 'MARK_ATTENDANCE_MAYBE', eventId: event, actorUserId: guest })).resolves.toMatchObject({ attendance: { userId: guest, status: 'MAYBE' }, capacity: { confirmedCount: 0, availableCount: 1 } });
+    await expect(attendance.decide({ kind: 'CANCEL_ATTENDANCE', eventId: event, actorUserId: guest })).resolves.toMatchObject({ attendance: { userId: guest, status: 'CANCELLED' }, capacity: { confirmedCount: 0, availableCount: 1 } });
+  });
   it('creates a pending RSVP for an Approval Required event without consuming capacity', async () => {
     const [organizer, guest, rejectedGuest, waitlistedGuest, newerWaitlistedGuest, category, event] = ['aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb','eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee','77777777-7777-4777-8777-777777777777','99999999-9999-4999-8999-999999999999','cccccccc-cccc-4ccc-8ccc-cccccccccccc','dddddddd-dddd-4ddd-8ddd-dddddddddddd'];
     await dataSource.query("INSERT INTO users (id,email,password_hash,email_verified_at,status) VALUES ($1,'approval-organizer@example.test','x',now(),'ACTIVE'),($2,'approval-guest@example.test','x',now(),'ACTIVE'),($3,'rejected-guest@example.test','x',now(),'ACTIVE'),($4,'waitlisted-guest@example.test','x',now(),'ACTIVE'),($5,'newer-waitlisted@example.test','x',now(),'ACTIVE')", [organizer, guest, rejectedGuest, waitlistedGuest, newerWaitlistedGuest]);

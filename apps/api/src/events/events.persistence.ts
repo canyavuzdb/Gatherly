@@ -175,7 +175,7 @@ export class AttendanceRecord {
   userId!: string;
 
   @Column({ type: 'varchar' })
-  status!: 'PENDING' | 'CONFIRMED' | 'WAITLISTED' | 'REJECTED' | 'CANCELLED';
+  status!: 'PENDING' | 'CONFIRMED' | 'WAITLISTED' | 'REJECTED' | 'CANCELLED' | 'MAYBE';
 
   @Column({ name: 'waitlist_opt_in', type: 'boolean' })
   waitlistOptIn!: boolean;
@@ -214,7 +214,7 @@ export class InvitationRecord {
   @Column({ name: 'event_id', type: 'uuid' }) eventId!: string;
   @Column({ name: 'recipient_user_id', type: 'uuid' }) recipientUserId!: string;
   @Column({ name: 'invited_by_user_id', type: 'uuid' }) invitedByUserId!: string;
-  @Column({ type: 'varchar' }) status!: 'PENDING' | 'ACCEPTED' | 'REVOKED' | 'EXPIRED';
+  @Column({ type: 'varchar' }) status!: 'PENDING' | 'ACCEPTED' | 'DECLINED' | 'REVOKED' | 'EXPIRED';
   @Column({ name: 'expires_at', type: 'timestamptz' }) expiresAt!: Date;
   @Column({ name: 'accepted_at', type: 'timestamptz', nullable: true }) acceptedAt!: Date | null;
   @Column({ name: 'revoked_at', type: 'timestamptz', nullable: true }) revokedAt!: Date | null;

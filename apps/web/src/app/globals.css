@@ -229,6 +229,10 @@ textarea {
 .event-participants-header .auth-eyebrow { margin: 0 0 5px; }
 .event-participants h2 { margin: 0; font-size: 19px; letter-spacing: -.045em; }
 .event-participants-header > span, .event-participants-note { margin: 0; color: var(--muted); font-size: 12px; }
+.participant-groups { display: flex; flex-wrap: wrap; align-items: center; gap: 34px; }
+.participant-maybes { display: grid; gap: 10px; padding-left: 30px; margin-left: 4px; border-left: 1px solid var(--line); }
+.participant-maybes p { margin: 0; color: var(--ink); font-size: 12px; font-weight: 680; }
+.participant-maybes p span { margin-left: 6px; color: var(--muted); font-weight: 500; }
 .participant-avatars { display: flex; min-height: 42px; align-items: center; padding-left: 4px; }
 .participant-avatar { position: relative; display: grid; width: 42px; height: 42px; margin-left: -4px; place-items: center; overflow: hidden; border: 2px solid var(--paper); border-radius: 50%; background: var(--ink); color: white; font-size: 11px; font-weight: 720; box-shadow: 0 0 0 1px rgba(23, 23, 23, .06); }
 .participant-avatar:first-child { margin-left: 0; }
@@ -245,10 +249,18 @@ textarea {
 .event-cancel-dialog h2 { max-width: 310px; margin: 0 0 13px; font-size: 27px; letter-spacing: -.06em; }
 .event-cancel-dialog > p:not(.auth-eyebrow) { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.5; }
 .event-cancel-dialog > div { display: flex; justify-content: flex-end; gap: 9px; margin-top: 25px; }
+.waitlist-dialog .auth-eyebrow { color: #a23a32; }
+.waitlist-dialog-actions { align-items: center; }
+.waitlist-dialog-actions .secondary-button, .waitlist-dialog-actions .primary-button { width: auto; min-height: 43px; margin: 0; padding: 0 17px; border-radius: 9px; font-size: 13px; white-space: nowrap; }
+.waitlist-dialog-actions .secondary-button { border-color: var(--line); font-weight: 600; }
+.waitlist-dialog-actions .primary-button { flex: 1; font-weight: 650; }
 .danger-button.is-solid { border-color: #a23a32; background: #a23a32; color: white; }
 .danger-button.is-solid:hover { background: #872b25; }
 .participant-directory-modal .auth-eyebrow { margin: 0 0 9px; }
 .participant-directory-modal h2 { margin: 0 0 23px; font-size: 27px; letter-spacing: -.06em; }
+.participant-maybe-directory { display: grid; gap: 10px; margin-top: 25px; padding-top: 22px; border-top: 1px solid var(--line); }
+.participant-maybe-directory .auth-eyebrow, .participant-maybe-directory h3 { margin: 0; }
+.participant-maybe-directory h3 { font-size: 16px; letter-spacing: -.03em; }
 .participant-directory-close { position: absolute; top: 14px; right: 14px; display: grid; width: 30px; height: 30px; place-items: center; border: 1px solid var(--line); border-radius: 50%; background: white; color: var(--ink); cursor: pointer; font-size: 25px; line-height: 1; }
 .participant-directory-list { display: grid; gap: 5px; }
 .participant-directory-list > div { display: flex; min-width: 0; align-items: center; gap: 10px; padding: 7px 0; border-bottom: 1px solid var(--line); font-size: 13px; font-weight: 620; }
