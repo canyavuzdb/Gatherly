@@ -21,8 +21,12 @@ Bir Event'in gerçekleşeceği yeri ifade eder. Etkinliğin keşfedilmesinde kul
 _Avoid_: Venue, address
 
 **Organizer**:
-Bir Event'i oluşturan ve yalnızca o Event üzerinde yönetim yetkisine sahip User'dır. MVP'de Organizer değişmez.
+Bir Event'i oluşturan veya kendisine Organizatorlük devredilmiş, o Event üzerinde yönetim yetkisine sahip User'dır. Devir, yalnızca uygun bir Confirmed Attendance'ın açıkça kabul ettiği tekil bir Organizer Transfer üzerinden gerçekleşir.
 _Avoid_: Owner, host
+
+**Organizer Transfer**:
+Mevcut Organizer'ın, başlamamış Published bir Event'teki başka bir Confirmed katılımcıya gönderdiği yönetim devri isteğidir. Alıcı kabul ederse Organizer değişir; kapasite ve Confirmed Attendance sayısı değişmez.
+_Avoid_: Silent ownership change, reassignment
 
 **Category**:
 Event'leri keşif için sınıflandıran, platform tarafından yönetilen kavramdır. Organizer yalnızca aktif bir Category seçebilir.
@@ -47,8 +51,8 @@ Published ve henüz başlamamış Public Event'lerin şehir, ilçe, Category ve 
 _Avoid_: Search, feed, recommendation
 
 **Personal Calendar**:
-Bir User'ın gelecekte Organizer olduğu veya aktif Attendance'ı bulunan Event'lerin zaman sıralı görünümüdür. Cancelled Event, ne gerçekleştiğini açıklamak için görünmeye devam eder.
-_Avoid_: History, attendance log
+Bir User'ın Organizer olduğu veya aktif Attendance'ı bulunan Event'lerin zaman sıralı görünümüdür. Yaklaşan ve geçmiş görünümleri, Cancelled Event'i ne gerçekleştiğini açıklamak için görünür tutar.
+_Avoid_: Attendance log
 
 **Notification**:
 Bir User'a gerçekleşmiş ve kendisini ilgilendiren Event, Attendance veya Invitation değişikliğini bildiren kalıcı in-app kayıttır. Notification iş gerçeğinin kendisi değildir; User güncel durumu ilgili sorgudan okur.

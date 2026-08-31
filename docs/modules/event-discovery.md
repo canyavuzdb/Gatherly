@@ -103,14 +103,14 @@ No projection exposes a roster, another User's Attendance, an Invitation, a reje
 
 ## 4. General Event Discovery
 
-`discover` reads only Events satisfying all of these conditions:
+`discover` reads Public Events satisfying all of these conditions:
 
 ```text
-status = PUBLISHED
 visibility = PUBLIC
-starts_at > current time
 city = requested city
 ```
+
+`scope = UPCOMING` (the default) adds `status = PUBLISHED` and `starts_at > current time`. `scope = PAST` returns completed and cancelled Public plans. The web view can use the permitted coordinates for map markers; this is a presentation of discovered Events, not radius or location-ranking search.
 
 District, Category, and half-open start-time range filters are optional. `city` is required; a range with `startsAtFrom >= startsAtBefore` is invalid. The default limit is twenty and the maximum is fifty.
 
@@ -118,9 +118,9 @@ Results sort by `starts_at ASC, id ASC`. A cursor binds the last tuple and the n
 
 The page includes only active Categories for the filter UI. An existing Event with an inactive Category still appears in a city result and exposes that Category on its card; it simply cannot be chosen as a new filter.
 
-When a Viewer is present, the query conditionally projects only that Viewer's Attendance status. It never joins a roster.
+When a Viewer is present, the list query conditionally projects only that Viewer's Attendance status. An authorized Event detail may project a roster: the Organizer sees confirmed participants, and confirmed participants see presentation data according to each Profile's visibility setting.
 
-The MVP excludes title/description search, relevance ranking, map or radius search, recommendation, cache, a search index, and a history query.
+The current scope excludes title/description search, relevance ranking, radius search, recommendations, cache, and a separate search index.
 
 ## 5. Event detail and privacy
 
@@ -147,14 +147,14 @@ Missing and unauthorized Event detail requests both return `EVENT_NOT_FOUND_OR_N
 
 ## 6. Personal Calendar
 
-`personalCalendar` requires an authenticated active User and returns future Event entries ordered by `starts_at ASC, id ASC`, with a default limit of twenty and maximum of fifty.
+`personalCalendar` requires an authenticated active User and returns Event entries ordered by `starts_at ASC, id ASC`, with a default limit of twenty and maximum of fifty. Its `UPCOMING` and `PAST` scopes follow the same product distinction as discovery.
 
 It combines:
 
-- future Events the User organizes in `DRAFT`, `PUBLISHED`, or `CANCELLED` state;
-- future Events where the User has `CONFIRMED`, `PENDING`, or `WAITLISTED` Attendance.
+- Events the User organizes in `DRAFT`, `PUBLISHED`, `CANCELLED`, or `COMPLETED` state;
+- Events where the User has `CONFIRMED`, `PENDING`, or `WAITLISTED` Attendance.
 
-An Event appearing through both paths occurs once, with `relationship = ORGANIZER`. Cancelled entries remain so the User can understand what happened. Started, Completed, and past Event history are outside the MVP query.
+An Event appearing through both paths occurs once, with `relationship = ORGANIZER`. Cancelled and completed entries remain readable as history.
 
 ## 7. Implementation and dependencies
 
@@ -188,15 +188,15 @@ Expected failures are part of the interface. PostgreSQL faults remain exceptiona
 
 The EventDiscoveryModule interface is the test surface. PostgreSQL integration tests must prove:
 
-1. Discovery excludes Draft, Unlisted, Private, Cancelled, Completed, and started Events.
+1. Upcoming Discovery excludes Draft, Unlisted, Private, Cancelled, Completed, and started Events; Past Discovery returns eligible completed and cancelled Public Events.
 2. Required city and optional district, Category, and date filters give only matching results in `starts_at, id` order.
 3. Cursor paging has no duplicates on a stable dataset and rejects cursors from another filter context.
 4. An inactive Category appears on its existing Event card but not in `activeCategories`.
-5. A Viewer sees only their own Attendance status; no result exposes a roster or another User's status.
+5. A list Viewer sees only their own Attendance status; roster data is returned only in authorized detail according to Organizer, Attendance, and Profile visibility rules.
 6. Public detail remains readable after cancellation/completion but has no join action.
 7. Unlisted and Private access succeeds only through their stated rules, while denied and missing detail are indistinguishable.
 8. Address projection distinguishes Event viewers from Confirmed Attendance holders.
-9. Personal Calendar unifies Organizer and Attendance paths, deduplicates an Organizer's initial Attendance, preserves Cancelled entries, and excludes history.
+9. Personal Calendar unifies Organizer and Attendance paths, deduplicates an Organizer's initial Attendance, and separates Upcoming from preserved history.
 
 ## 10. Implementation map
 

@@ -4,7 +4,7 @@ This document applies the [application architecture](../architecture/application
 
 ## 1. Purpose and ownership
 
-The `events` module owns complete Draft creation, Event metadata, Event Location, Event Visibility, Join Policy, share-token lifecycle, cancellation, and scheduled completion. It owns the Event Creation Quota transaction because creating a Draft changes both the quota snapshot and the Event aggregate.
+The `events` module owns complete Draft creation, Event metadata, Event Location, Event Visibility, Join Policy, share-token lifecycle, cancellation, organizer transfer, and scheduled completion. It owns the Event Creation Quota transaction because creating a Draft changes both the quota snapshot and the Event aggregate.
 
 The `attendance` module owns every later decision that selects an Attendance or changes `confirmed_count`. The one coordination case is a pre-start capacity increase: Event metadata and the resulting `OPEN` FIFO promotion commit together, while Attendance implementation remains responsible for selecting and confirming the Waitlisted Attendance.
 
@@ -22,6 +22,8 @@ export type EventCommand =
   | ReviseEvent
   | PublishEvent
   | CancelEvent
+  | RequestOrganizerTransfer
+  | RespondToOrganizerTransfer
   | CompleteDueEvents;
 
 export type CreateDraft = {
@@ -54,6 +56,20 @@ export type CancelEvent = {
   expectedVersion: number;
 };
 
+export type RequestOrganizerTransfer = {
+  kind: 'REQUEST_ORGANIZER_TRANSFER';
+  eventId: EventId;
+  actorUserId: UserId;
+  recipientUserId: UserId;
+};
+
+export type RespondToOrganizerTransfer = {
+  kind: 'RESPOND_TO_ORGANIZER_TRANSFER';
+  transferId: string;
+  actorUserId: UserId;
+  response: 'ACCEPT' | 'DECLINE';
+};
+
 export type CompleteDueEvents = {
   kind: 'COMPLETE_DUE_EVENTS';
 };
@@ -77,6 +93,9 @@ export type EventOutcome = {
     | 'EVENT_REVISED'
     | 'EVENT_PUBLISHED'
     | 'EVENT_CANCELLED'
+    | 'ORGANIZER_TRANSFER_REQUESTED'
+    | 'ORGANIZER_TRANSFER_ACCEPTED'
+    | 'ORGANIZER_TRANSFER_DECLINED'
     | 'DUE_EVENTS_COMPLETED';
   event?: EventSnapshot;
   capacity?: CapacitySnapshot;
@@ -99,7 +118,7 @@ stateDiagram-v2
     PUBLISHED --> COMPLETED: scheduled completion / ends_at elapsed
 ```
 
-There is no physical Event deletion, no ownership transfer, no publication of an expired Draft, no cancellation after start time, and no transition out of `CANCELLED` or `COMPLETED` in the MVP.
+There is no physical Event deletion, no publication of an expired Draft, no cancellation after start time, and no transition out of `CANCELLED` or `COMPLETED`.
 
 A Draft is complete but unavailable for discovery and attendance. Creating it consumes Event Creation Quota and never refunds that quota. A Published Event may be revised only before start time; publish also requires a future `starts_at`.
 
@@ -114,7 +133,7 @@ Every `CompleteEventDefinition` is evaluated as a whole:
 5. `PRIVATE` requires `INVITE_ONLY`; Public and Unlisted accept any Join Policy.
 6. City and district are always present; precise address obeys its own visibility rule.
 7. Unlisted has a share token. Entering or re-entering Unlisted generates a new token; leaving it clears the token.
-8. Organizer is immutable.
+8. Organizer changes only through an explicit accepted organizer-transfer request; ordinary revision never changes ownership.
 
 Access changes apply prospectively. Existing Confirmed, Pending, and Waitlisted Attendances keep their active access; new requests use the revised Event Visibility and Join Policy.
 
@@ -123,9 +142,11 @@ Access changes apply prospectively. Existing Confirmed, Pending, and Waitlisted 
 | Command | Who calls it | Transaction result |
 | --- | --- | --- |
 | `CREATE_DRAFT` | active User | locks or upserts the monthly quota row; creates complete Draft, Location, Organizer Confirmed Attendance, and `confirmed_count = 1`; increments quota. |
-| `REVISE_EVENT` | immutable Organizer | locks the Event; verifies expected version, state, time, and full definition; updates Event/Location/access and coordinates any promotion. |
-| `PUBLISH_EVENT` | immutable Organizer | locks Draft; verifies expected version and future start; marks Published. |
-| `CANCEL_EVENT` | immutable Organizer | locks Draft or pre-start Published Event; marks Cancelled, revokes pending Invitations, and preserves Attendance history. |
+| `REVISE_EVENT` | current Organizer | locks the Event; verifies expected version, state, time, and full definition; updates Event/Location/access and coordinates any promotion. |
+| `PUBLISH_EVENT` | current Organizer | locks Draft; verifies expected version and future start; marks Published. |
+| `CANCEL_EVENT` | current Organizer | locks Draft or pre-start Published Event; marks Cancelled, revokes pending Invitations and pending transfers, and preserves Attendance history. |
+| `REQUEST_ORGANIZER_TRANSFER` | current Organizer | creates one pending request for a different Confirmed participant of a scheduled Published Event. |
+| `RESPOND_TO_ORGANIZER_TRANSFER` | requested participant | accepts (atomically changes `organizer_id`) or declines a pending request; confirmed capacity is unchanged. |
 | `COMPLETE_DUE_EVENTS` | scheduled adapter | claims due Published Events, changes them to Completed, and returns the completed identifiers. |
 
 `COMPLETE_DUE_EVENTS` is idempotent. It uses the implementation's clock and locks each due Event so concurrent scheduler executions cannot complete the same Event twice.
@@ -169,6 +190,8 @@ INVALID_EVENT_TIMING
 INVALID_EVENT_DEFINITION
 PRIVATE_EVENT_REQUIRES_INVITE_ONLY
 CAPACITY_BELOW_CONFIRMED_COUNT
+ORGANIZER_TRANSFER_RECIPIENT_NOT_ELIGIBLE
+ORGANIZER_TRANSFER_NOT_FOUND
 ```
 
 Unexpected PostgreSQL, dispatcher, or scheduled-runtime failures remain exceptional. A distribution failure after a successful commit never rolls an Event back.
@@ -183,6 +206,9 @@ event.revised.v1
 event.cancelled.v1
 event.completed.v1
 event.capacity.changed.v1
+organizer-transfer.requested.v1
+organizer-transfer.accepted.v1
+organizer-transfer.declined.v1
 invitation.revoked.v1
 ```
 
