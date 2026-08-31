@@ -24,16 +24,16 @@ export class InvitationsHttpController {
   }
   @Get('invitations/me')
   async listMine(@Headers('authorization') authorization: string | undefined) {
-    return this.withActor(authorization, (actorUserId) => this.invitations.decide({ kind: 'LIST_MY_PENDING_INVITATIONS', actorUserId }));
+    return this.withActor(authorization, (actorUserId) => this.invitations.decide({ kind: 'LIST_MY_PENDING_INVITATIONS', actorUserId }), false);
   }
   @Get('events/:eventId/invitations')
   async listEvent(@Headers('authorization') authorization: string | undefined, @Param('eventId') eventId: string) {
     return this.withActor(authorization, (actorUserId) => this.invitations.decide({ kind: 'LIST_EVENT_INVITATIONS', eventId, actorUserId }));
   }
-  private async withActor<T>(authorization: string | undefined, operation: (actorUserId: string) => Promise<T>): Promise<T> {
+  private async withActor<T>(authorization: string | undefined, operation: (actorUserId: string) => Promise<T>, recordActivity = true): Promise<T> {
     const token = /^Bearer (.+)$/.exec(authorization ?? '')?.[1];
     if (!token) throw new UnauthorizedException('ACCESS_TOKEN_INVALID');
-    try { return await operation((await this.auth.authenticate(token)).userId); }
+    try { return await operation((await this.auth.authenticate(token, { recordActivity })).userId); }
     catch (error) { if (error instanceof AuthBusinessError) throw new UnauthorizedException(error.code); if (error instanceof InvitationsBusinessError) { if (error.code === 'FORBIDDEN' || error.code === 'ACTOR_NOT_ACTIVE') throw new ForbiddenException(error.code); throw new BadRequestException(error.code); } throw error; }
   }
 }

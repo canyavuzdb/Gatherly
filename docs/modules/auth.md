@@ -139,9 +139,9 @@ export type AuthOutcome =
 
 1. Passwords are stored only as Argon2id digests.
 2. A password has at least twelve characters and must not occur in the small versioned common-password deny list. No character-class rule exists.
-3. An access JWT lasts fifteen minutes. A Refresh Session lasts at most thirty days, and only its secret digest is stored.
+3. An access JWT lasts fifteen minutes. A Refresh Session expires after seven days without meaningful authenticated activity and has a fixed maximum lifetime of thirty days from sign-in; refreshes do not extend that maximum. Only its secret digest is stored.
 4. A User has at most five active Refresh Sessions. A sixth sign-in revokes the oldest active session in the same transaction.
-5. Refresh revokes the used session and creates a new one. Replaying an old refresh secret fails.
+5. Refresh rotates the secret of the same session without recording activity or extending its maximum lifetime. Replaying an old refresh secret fails.
 6. Normal sign-out affects only the presented session. Password reset, password change, suspension, and self-deletion revoke all active sessions.
 7. Verification secrets expire after twenty-four hours; a resend invalidates earlier unused verification secrets and may occur at most once per User per sixty seconds.
 8. Reset secrets expire after one hour; a new request invalidates earlier unused reset secrets.

@@ -31,6 +31,8 @@ import {
 } from './auth.persistence';
 
 const DAY_IN_MILLISECONDS = 24 * 60 * 60 * 1000;
+const IDLE_SESSION_TIMEOUT_IN_MILLISECONDS = 7 * DAY_IN_MILLISECONDS;
+const ABSOLUTE_SESSION_TIMEOUT_IN_MILLISECONDS = 30 * DAY_IN_MILLISECONDS;
 const COMMON_PASSWORDS = new Set([
   '123456789012',
   'passwordpassword',
@@ -104,9 +106,10 @@ export class AuthImplementation implements AuthModule {
     return { kind: 'SELF_DELETED' };
   }
 
-  async authenticate(accessToken: string): Promise<UserIdentity> {
+  async authenticate(accessToken: string, options: { recordActivity?: boolean } = {}): Promise<UserIdentity> {
     let userId: string;
     let tokenVersion: number;
+    let sessionId: string;
     try {
       const payload = verify(accessToken, this.dependencies.jwtSecret, {
         algorithms: ['HS256'],
@@ -114,12 +117,14 @@ export class AuthImplementation implements AuthModule {
       if (
         typeof payload !== 'object' ||
         typeof payload.sub !== 'string' ||
-        typeof payload.uv !== 'number'
+        typeof payload.uv !== 'number' ||
+        typeof payload.sid !== 'string'
       ) {
         throw new AuthBusinessError('ACCESS_TOKEN_INVALID');
       }
       userId = payload.sub;
       tokenVersion = payload.uv;
+      sessionId = payload.sid;
     } catch (error) {
       if (error instanceof AuthBusinessError) {
         throw error;
@@ -127,13 +132,24 @@ export class AuthImplementation implements AuthModule {
       throw new AuthBusinessError('ACCESS_TOKEN_INVALID');
     }
 
-    const user = await this.dataSource.manager.findOneBy(UserRecord, { id: userId });
+    const now = this.now();
+    const [user, session] = await Promise.all([
+      this.dataSource.manager.findOneBy(UserRecord, { id: userId }),
+      this.dataSource.manager.findOneBy(RefreshSessionRecord, { id: sessionId, userId }),
+    ]);
     if (
       !user ||
       user.status !== 'ACTIVE' ||
-      tokenVersion !== user.version
+      tokenVersion !== user.version ||
+      !session ||
+      !this.isSessionUsable(session, now)
     ) {
       throw new AuthBusinessError('ACCESS_TOKEN_INVALID');
+    }
+
+    if (options.recordActivity !== false) {
+      session.lastUsedAt = now;
+      await this.dataSource.manager.save(session);
     }
 
     return {
@@ -154,9 +170,9 @@ export class AuthImplementation implements AuthModule {
       Promise.resolve(this.randomSecret()),
     ]);
     const now = this.now();
-    const refreshExpiresAt = new Date(now.getTime() + 30 * DAY_IN_MILLISECONDS);
+    const refreshExpiresAt = new Date(now.getTime() + ABSOLUTE_SESSION_TIMEOUT_IN_MILLISECONDS);
 
-    let issuedTo: { userId: string; version: number };
+    let issuedTo: { userId: string; version: number; refreshSessionId: string };
     try {
       issuedTo = await this.dataSource.transaction(async (manager) => {
         const user = await manager.save(
@@ -190,17 +206,17 @@ export class AuthImplementation implements AuthModule {
             invalidatedAt: null,
           }),
         );
-        await manager.save(
+        const refreshSession = await manager.save(
           manager.create(RefreshSessionRecord, {
             userId: user.id,
             tokenHash: hashSecret(refreshSecret),
             expiresAt: refreshExpiresAt,
             revokedAt: null,
-            lastUsedAt: null,
+            lastUsedAt: now,
           }),
         );
 
-        return { userId: user.id, version: user.version };
+        return { userId: user.id, version: user.version, refreshSessionId: refreshSession.id };
       });
     } catch (error) {
       if (isUniqueEmailViolation(error)) {
@@ -213,7 +229,7 @@ export class AuthImplementation implements AuthModule {
 
     return {
       kind: 'SESSION_GRANTED',
-      accessToken: this.issueAccessToken(issuedTo.userId, issuedTo.version),
+      accessToken: this.issueAccessToken(issuedTo.userId, issuedTo.version, issuedTo.refreshSessionId),
       refreshSecret,
       refreshExpiresAt,
       identity: { userId: issuedTo.userId, verification: 'UNVERIFIED' },
@@ -224,7 +240,7 @@ export class AuthImplementation implements AuthModule {
     const email = command.email.trim().toLowerCase();
     const refreshSecret = this.randomSecret();
     const now = this.now();
-    const refreshExpiresAt = new Date(now.getTime() + 30 * DAY_IN_MILLISECONDS);
+    const refreshExpiresAt = new Date(now.getTime() + ABSOLUTE_SESSION_TIMEOUT_IN_MILLISECONDS);
 
     const identity = await this.dataSource.transaction(async (manager) => {
       const user = await manager.findOneBy(UserRecord, { email });
@@ -247,26 +263,27 @@ export class AuthImplementation implements AuthModule {
         await manager.save(oldestSession);
       }
 
-      await manager.save(
+      const refreshSession = await manager.save(
         manager.create(RefreshSessionRecord, {
           userId: user.id,
           tokenHash: hashSecret(refreshSecret),
           expiresAt: refreshExpiresAt,
           revokedAt: null,
-          lastUsedAt: null,
+          lastUsedAt: now,
         }),
       );
 
       return {
         userId: user.id,
         version: user.version,
+        refreshSessionId: refreshSession.id,
         verification: user.emailVerifiedAt ? ('VERIFIED' as const) : ('UNVERIFIED' as const),
       };
     });
 
     return {
       kind: 'SESSION_GRANTED',
-      accessToken: this.issueAccessToken(identity.userId, identity.version),
+      accessToken: this.issueAccessToken(identity.userId, identity.version, identity.refreshSessionId),
       refreshSecret,
       refreshExpiresAt,
       identity,
@@ -276,7 +293,6 @@ export class AuthImplementation implements AuthModule {
   private async refreshSession(command: RefreshSession): Promise<SessionGrant> {
     const now = this.now();
     const refreshSecret = this.randomSecret();
-    const refreshExpiresAt = new Date(now.getTime() + 30 * DAY_IN_MILLISECONDS);
     const presentedSecretHash = hashSecret(command.refreshSecret);
 
     const identity = await this.dataSource.transaction(async (manager) => {
@@ -287,7 +303,7 @@ export class AuthImplementation implements AuthModule {
       if (
         !presentedSession ||
         presentedSession.revokedAt ||
-        presentedSession.expiresAt <= now
+        !this.isSessionUsable(presentedSession, now)
       ) {
         throw new AuthBusinessError('REFRESH_SESSION_INVALID');
       }
@@ -299,31 +315,23 @@ export class AuthImplementation implements AuthModule {
         throw new AuthBusinessError('REFRESH_SESSION_INVALID');
       }
 
-      presentedSession.revokedAt = now;
-      presentedSession.lastUsedAt = now;
+      presentedSession.tokenHash = hashSecret(refreshSecret);
       await manager.save(presentedSession);
-      await manager.save(
-        manager.create(RefreshSessionRecord, {
-          userId: user.id,
-          tokenHash: hashSecret(refreshSecret),
-          expiresAt: refreshExpiresAt,
-          revokedAt: null,
-          lastUsedAt: null,
-        }),
-      );
 
       return {
         userId: user.id,
         version: user.version,
+        refreshSessionId: presentedSession.id,
+        refreshExpiresAt: this.absoluteSessionExpiry(presentedSession),
         verification: user.emailVerifiedAt ? ('VERIFIED' as const) : ('UNVERIFIED' as const),
       };
     });
 
     return {
       kind: 'SESSION_GRANTED',
-      accessToken: this.issueAccessToken(identity.userId, identity.version),
+      accessToken: this.issueAccessToken(identity.userId, identity.version, identity.refreshSessionId),
       refreshSecret,
-      refreshExpiresAt,
+      refreshExpiresAt: identity.refreshExpiresAt,
       identity,
     };
   }
@@ -490,7 +498,7 @@ export class AuthImplementation implements AuthModule {
       Promise.resolve(this.randomSecret()),
     ]);
     const now = this.now();
-    const refreshExpiresAt = new Date(now.getTime() + 30 * DAY_IN_MILLISECONDS);
+    const refreshExpiresAt = new Date(now.getTime() + ABSOLUTE_SESSION_TIMEOUT_IN_MILLISECONDS);
 
     const identity = await this.dataSource.transaction(async (manager) => {
       const token = await manager.findOne(PasswordResetTokenRecord, {
@@ -521,26 +529,27 @@ export class AuthImplementation implements AuthModule {
         .where('user_id = :userId', { userId: user.id })
         .andWhere('revoked_at IS NULL')
         .execute();
-      await manager.save(
+      const refreshSession = await manager.save(
         manager.create(RefreshSessionRecord, {
           userId: user.id,
           tokenHash: hashSecret(refreshSecret),
           expiresAt: refreshExpiresAt,
           revokedAt: null,
-          lastUsedAt: null,
+          lastUsedAt: now,
         }),
       );
 
       return {
         userId: user.id,
         version: user.version,
+        refreshSessionId: refreshSession.id,
         verification: user.emailVerifiedAt ? ('VERIFIED' as const) : ('UNVERIFIED' as const),
       };
     });
 
     return {
       kind: 'SESSION_GRANTED',
-      accessToken: this.issueAccessToken(identity.userId, identity.version),
+      accessToken: this.issueAccessToken(identity.userId, identity.version, identity.refreshSessionId),
       refreshSecret,
       refreshExpiresAt,
       identity,
@@ -588,8 +597,17 @@ export class AuthImplementation implements AuthModule {
     return { kind: 'PASSWORD_CHANGED' };
   }
 
-  private issueAccessToken(userId: string, version: number) {
-    return sign({ sub: userId, uv: version }, this.dependencies.jwtSecret, {
+  private isSessionUsable(session: RefreshSessionRecord, now: Date) {
+    const lastActivityAt = session.lastUsedAt ?? session.createdAt;
+    return !session.revokedAt && session.expiresAt > now && this.absoluteSessionExpiry(session) > now && now.getTime() - lastActivityAt.getTime() <= IDLE_SESSION_TIMEOUT_IN_MILLISECONDS;
+  }
+
+  private absoluteSessionExpiry(session: RefreshSessionRecord) {
+    return new Date(Math.min(session.expiresAt.getTime(), session.createdAt.getTime() + ABSOLUTE_SESSION_TIMEOUT_IN_MILLISECONDS));
+  }
+
+  private issueAccessToken(userId: string, version: number, sessionId: string) {
+    return sign({ sub: userId, uv: version, sid: sessionId }, this.dependencies.jwtSecret, {
       algorithm: 'HS256',
       expiresIn: '15m',
     });

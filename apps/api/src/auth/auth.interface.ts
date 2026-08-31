@@ -88,5 +88,5 @@ export type AuthOutcome =
 
 export interface AuthModule {
   decide(command: AuthCommand): Promise<AuthOutcome>;
-  authenticate(accessToken: string): Promise<UserIdentity>;
+  authenticate(accessToken: string, options?: { recordActivity?: boolean }): Promise<UserIdentity>;
 }

@@ -139,6 +139,38 @@ describe('AuthModule registration', () => {
     ).rejects.toMatchObject({ code: 'REFRESH_SESSION_INVALID' });
   });
 
+  it('rejects a refresh session after seven days without meaningful activity', async () => {
+    const registration = asSessionGrant(await auth.decide({
+      kind: 'REGISTER',
+      email: 'idle@example.com',
+      password: 'correct-horse-battery-staple',
+      firstName: 'Idle',
+      lastName: 'Session',
+    }));
+
+    currentTime = new Date(currentTime.getTime() + 7 * 24 * 60 * 60 * 1000 + 1);
+
+    await expect(auth.decide({ kind: 'REFRESH_SESSION', refreshSecret: registration.refreshSecret }))
+      .rejects.toMatchObject({ code: 'REFRESH_SESSION_INVALID' });
+  });
+
+  it('rejects a session after thirty days even when it has recent activity', async () => {
+    const registration = asSessionGrant(await auth.decide({
+      kind: 'REGISTER',
+      email: 'absolute@example.com',
+      password: 'correct-horse-battery-staple',
+      firstName: 'Absolute',
+      lastName: 'Session',
+    }));
+    await dataSource.query(
+      'UPDATE refresh_sessions SET created_at = $1, last_used_at = $2 WHERE user_id = $3',
+      [new Date(currentTime.getTime() - 31 * 24 * 60 * 60 * 1000), currentTime, registration.identity.userId],
+    );
+
+    await expect(auth.decide({ kind: 'REFRESH_SESSION', refreshSecret: registration.refreshSecret }))
+      .rejects.toMatchObject({ code: 'REFRESH_SESSION_INVALID' });
+  });
+
   it('revokes the presented session and allows a repeated sign-out', async () => {
     const registration = asSessionGrant(await auth.decide({
       kind: 'REGISTER',
