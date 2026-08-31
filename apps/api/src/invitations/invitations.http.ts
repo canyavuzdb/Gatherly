@@ -22,6 +22,11 @@ export class InvitationsHttpController {
   async revoke(@Headers('authorization') authorization: string | undefined, @Param('invitationId') invitationId: string) {
     return this.withActor(authorization, (actorUserId) => this.invitations.decide({ kind: 'REVOKE_INVITATION', invitationId, actorUserId }));
   }
+  @Post('invitations/:invitationId/decline')
+  @HttpCode(HttpStatus.OK)
+  async decline(@Headers('authorization') authorization: string | undefined, @Param('invitationId') invitationId: string) {
+    return this.withActor(authorization, (actorUserId) => this.invitations.decide({ kind: 'DECLINE_INVITATION', invitationId, actorUserId }));
+  }
   @Get('invitations/me')
   async listMine(@Headers('authorization') authorization: string | undefined) {
     return this.withActor(authorization, (actorUserId) => this.invitations.decide({ kind: 'LIST_MY_PENDING_INVITATIONS', actorUserId }), false);

@@ -4,13 +4,14 @@ import { EventRecord, InvitationRecord } from '../events/events.persistence';
 import { InvitationsBusinessError } from './invitations.errors';
 import { MessagingImplementation } from '../messaging/messaging.implementation';
 import type { RealtimeModule } from '../realtime/realtime.interface';
-import type { CreateInvitation, InvitationCommand, InvitationView, InvitationsModule, ListEventInvitations, ListMyPendingInvitations, RevokeInvitation } from './invitations.interface';
+import type { CreateInvitation, DeclineInvitation, InvitationCommand, InvitationView, InvitationsModule, ListEventInvitations, ListMyPendingInvitations, RevokeInvitation } from './invitations.interface';
 
 export class InvitationsImplementation implements InvitationsModule {
   constructor(private readonly dataSource: DataSource, private readonly messaging?: MessagingImplementation, private readonly now = () => new Date(), private readonly realtime?: RealtimeModule) {}
   async decide(command: InvitationCommand): Promise<InvitationView | InvitationView[]> {
     if (command.kind === 'CREATE_INVITATION') return this.create(command);
     if (command.kind === 'REVOKE_INVITATION') return this.revoke(command);
+    if (command.kind === 'DECLINE_INVITATION') return this.decline(command);
     if (command.kind === 'LIST_EVENT_INVITATIONS') return this.listEvent(command);
     return this.listPending(command);
   }
@@ -52,6 +53,20 @@ export class InvitationsImplementation implements InvitationsModule {
       return this.view(await manager.save(invitation), event);
     });
     await this.messaging?.publish([{ messageId: `invitation:${result.id}:${result.version}`, eventName: 'invitation.revoked.v1', eventVersion: 1, occurredAt: this.now(), correlationId: result.id, payload: { recipientUserId: result.recipientUserId, eventId: result.eventId, title: 'Invitation revoked', body: 'An event invitation was revoked.' } }]);
+    await this.realtime?.emit({ kind: 'USER_EVENT_CHANGED', recipientUserId: result.recipientUserId, eventId: result.eventId, change: 'INVITATION' });
+    return result;
+  }
+  private async decline(command: DeclineInvitation): Promise<InvitationView> {
+    const result = await this.dataSource.transaction(async (manager) => {
+      const invitation = await manager.findOne(InvitationRecord, { where: { id: command.invitationId }, lock: { mode: 'pessimistic_write' } });
+      if (!invitation || invitation.recipientUserId !== command.actorUserId) throw new InvitationsBusinessError('INVITATION_NOT_FOUND');
+      const event = await manager.findOneBy(EventRecord, { id: invitation.eventId });
+      if (!event) throw new InvitationsBusinessError('INVITATION_NOT_FOUND');
+      if (invitation.status === 'DECLINED') return this.view(invitation, event);
+      if (invitation.status !== 'PENDING' || invitation.expiresAt <= this.now()) throw new InvitationsBusinessError('INVALID_INVITATION');
+      invitation.status = 'DECLINED'; invitation.updatedByUserId = command.actorUserId; invitation.updatedByKind = 'USER'; invitation.version += 1;
+      return this.view(await manager.save(invitation), event);
+    });
     await this.realtime?.emit({ kind: 'USER_EVENT_CHANGED', recipientUserId: result.recipientUserId, eventId: result.eventId, change: 'INVITATION' });
     return result;
   }

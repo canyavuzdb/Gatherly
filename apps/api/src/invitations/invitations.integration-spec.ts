@@ -25,4 +25,15 @@ describe('InvitationsModule', () => {
     const count = await dataSource.query('SELECT count(*)::int AS count FROM invitations WHERE event_id = $1 AND recipient_user_id = $2', [event, recipient]);
     expect(count[0].count).toBe(1);
   });
+
+  it('lets the recipient decline an invitation and allows the organizer to invite them again', async () => {
+    const [organizer, recipient, category, event, firstId, secondId] = ['81717171-7171-4717-8717-717171717171','82727272-7272-4727-8727-727272727272','83737373-7373-4737-8737-737373737373','84747474-7474-4747-8747-747474747474','85757575-7575-4757-8757-757575757575','86767676-7676-4767-8767-767676767676'];
+    await dataSource.query("INSERT INTO users (id,email,password_hash,email_verified_at,status) VALUES ($1,'decline-inviter@example.test','x',now(),'ACTIVE'),($2,'decline-invitee@example.test','x',now(),'ACTIVE')", [organizer, recipient]);
+    await dataSource.query("INSERT INTO categories (id,name,slug,updated_by_kind) VALUES ($1,'Books','books','SYSTEM')", [category]);
+    await dataSource.query("INSERT INTO events (id,organizer_id,category_id,title,description,starts_at,ends_at,timezone,capacity,confirmed_count,visibility,join_policy,status,created_by_user_id,updated_by_kind) VALUES ($1,$2,$3,'Reading','Books','2026-09-01T18:00:00Z','2026-09-01T20:00:00Z','Europe/Istanbul',2,0,'PRIVATE','INVITE_ONLY','PUBLISHED',$2,'USER')", [event, organizer, category]);
+    await invitations.decide({ kind: 'CREATE_INVITATION', invitationId: firstId, eventId: event, actorUserId: organizer, recipientUserId: recipient, expiresAt: new Date('2026-09-02T00:00:00Z') });
+    await expect(invitations.decide({ kind: 'DECLINE_INVITATION', invitationId: firstId, actorUserId: recipient })).resolves.toMatchObject({ id: firstId, status: 'DECLINED' });
+    await expect(invitations.decide({ kind: 'LIST_MY_PENDING_INVITATIONS', actorUserId: recipient })).resolves.toEqual([]);
+    await expect(invitations.decide({ kind: 'CREATE_INVITATION', invitationId: secondId, eventId: event, actorUserId: organizer, recipientUserId: recipient, expiresAt: new Date('2026-09-03T00:00:00Z') })).resolves.toMatchObject({ id: firstId, status: 'PENDING', version: 3 });
+  });
 });
