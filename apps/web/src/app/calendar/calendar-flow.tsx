@@ -11,6 +11,7 @@ export type CalendarEvent = {
   id: string;
   title: string;
   startsAt: string;
+  status: 'PUBLISHED' | 'CANCELLED' | 'COMPLETED';
   category: { id: string; name: string; isActive: boolean };
   location: { city: string; district: string; venueName: string | null };
   capacity: { kind: 'UNLIMITED' } | { kind: 'LIMITED'; capacity: number; confirmedCount: number; availableSeats: number };
@@ -41,8 +42,8 @@ export function CalendarFlow({ events, city, onCitySelect, isGuest, isLoading }:
       <nav className="calendar-day-scroller" aria-label="Takvim günleri">{days.map((day, dayIndex) => <button type="button" className={day.key === selectedDay?.key ? 'is-selected' : ''} onClick={() => setSelectedDayKey(day.key)} key={day.key}><small>{dayIndex === 0 ? 'BUGÜN' : day.label}</small><strong>{formatContextDate(day.date)}</strong><span>{day.count ? `${day.count} plan` : 'Boş'}</span></button>)}</nav>
       <div className="calendar-selected-day">
         <p>{selectedDay ? formatLongDate(selectedDay.date) : 'Bugün'}</p>
-        {dayEvents.length > 0 ? <div className="calendar-stream-axis">{dayEvents.map((event, index) => <button className="calendar-stream-event" type="button" key={event.id} onClick={() => setSelectedEvent(event)}>
-        <time>{formatTime(event.startsAt)}</time><i className={categoryToneClass(event.category.name)} aria-hidden="true" /><span className="calendar-stream-content">{event.coverMediaAssetId && <img className="calendar-stream-cover" src={mediaUrl(event.coverMediaAssetId)} alt="" onError={(image) => { image.currentTarget.style.display = 'none'; }} />}<span className="calendar-stream-copy"><small>{event.ownAttendanceStatus === 'CONFIRMED' ? 'KATILIYORSUN' : index === 0 ? 'YAKLAŞAN' : event.category.name}</small><strong>{event.title}</strong><em>{event.location.venueName ?? `${event.location.city} · ${event.location.district}`} · {formatAttendance(event.capacity)}</em>{routeSummaryLabel(event.route) && <span className="event-route-summary">↗ {routeSummaryLabel(event.route)}</span>}</span></span><b aria-hidden="true">↗</b>
+        {dayEvents.length > 0 ? <div className="calendar-stream-axis">{dayEvents.map((event, index) => <button className={event.status === 'CANCELLED' ? 'calendar-stream-event is-cancelled' : 'calendar-stream-event'} type="button" key={event.id} onClick={() => setSelectedEvent(event)}>
+        <time>{formatTime(event.startsAt)}</time><i className={categoryToneClass(event.category.name)} aria-hidden="true" /><span className="calendar-stream-content">{event.coverMediaAssetId && <img className="calendar-stream-cover" src={mediaUrl(event.coverMediaAssetId)} alt="" onError={(image) => { image.currentTarget.style.display = 'none'; }} />}<span className="calendar-stream-copy"><small>{event.status === 'CANCELLED' ? 'İPTAL EDİLDİ' : event.ownAttendanceStatus === 'CONFIRMED' ? 'KATILIYORSUN' : index === 0 ? 'YAKLAŞAN' : event.category.name}</small><strong>{event.title}</strong><em>{event.location.venueName ?? `${event.location.city} · ${event.location.district}`} · {event.status === 'CANCELLED' ? 'İptal edildi' : formatAttendance(event.capacity)}</em>{routeSummaryLabel(event.route) && <span className="event-route-summary">↗ {routeSummaryLabel(event.route)}</span>}</span></span><b aria-hidden="true">↗</b>
         </button>)}</div> : <div className="calendar-selection-empty"><strong>Bu gün boş.</strong><span>Başka günleri kaydırarak göz atabilir ya da yeni bir etkinlik keşfedebilirsin.</span><Link href="/discover">Etkinlik keşfet →</Link></div>}
       </div>
     </section>

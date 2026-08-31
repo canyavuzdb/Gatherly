@@ -13,6 +13,7 @@ type EventCard = {
   id: string;
   title: string;
   startsAt: string;
+  status: 'PUBLISHED' | 'CANCELLED' | 'COMPLETED';
   category: { id: string; name: string; isActive: boolean };
   location: { city: string; district: string; venueName: string | null };
   capacity: { kind: 'UNLIMITED' } | { kind: 'LIMITED'; capacity: number; confirmedCount: number; availableSeats: number };
@@ -103,8 +104,8 @@ function DiscoverEvent({ event }: { event: EventCard }) {
   const location = event.location.venueName ?? `${event.location.city} · ${event.location.district}`;
   const capacity = event.capacity.kind === 'UNLIMITED' ? 'Katılım açık' : `${event.capacity.availableSeats} yer kaldı`;
   const routeSummary = routeSummaryLabel(event.route);
-  return <Link className="discover-event" href={`/events/${event.id}`}>
-    <time>{formatTime(event.startsAt)}</time><i className={categoryToneClass(event.category.name)} aria-hidden="true" /><span className="discover-event-content">{event.coverMediaAssetId && <img src={`${apiUrl}/api/v1/media/${event.coverMediaAssetId}`} alt="" onError={(image) => { image.currentTarget.style.display = 'none'; }} />}<span className="discover-event-copy"><small>{event.category.name}</small><strong>{event.title}</strong><em>{location} · {capacity}</em>{routeSummary && <span className="event-route-summary">↗ {routeSummary}</span>}</span></span><b aria-hidden="true">↗</b>
+  return <Link className={event.status === 'CANCELLED' ? 'discover-event is-cancelled' : 'discover-event'} href={`/events/${event.id}`}>
+    <time>{formatTime(event.startsAt)}</time><i className={categoryToneClass(event.category.name)} aria-hidden="true" /><span className="discover-event-content">{event.coverMediaAssetId && <img src={`${apiUrl}/api/v1/media/${event.coverMediaAssetId}`} alt="" onError={(image) => { image.currentTarget.style.display = 'none'; }} />}<span className="discover-event-copy"><small>{event.status === 'CANCELLED' ? 'İPTAL EDİLDİ' : event.category.name}</small><strong>{event.title}</strong><em>{location} · {event.status === 'CANCELLED' ? 'İptal edildi' : capacity}</em>{routeSummary && <span className="event-route-summary">↗ {routeSummary}</span>}</span></span><b aria-hidden="true">↗</b>
   </Link>;
 }
 

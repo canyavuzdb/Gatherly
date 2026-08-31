@@ -11,6 +11,7 @@ type EventDetail = {
   title: string;
   description: string;
   startsAt: string;
+  version: number;
   timezone: string;
   status: 'DRAFT' | 'PUBLISHED' | 'CANCELLED' | 'COMPLETED';
   joinPolicy: 'OPEN' | 'APPROVAL_REQUIRED' | 'INVITE_ONLY';
@@ -22,8 +23,10 @@ type EventDetail = {
   organizerPreview: { kind: 'VISIBLE'; userId: string; name: string; initials: string; avatarMediaAssetId?: string } | { kind: 'ANONYMOUS'; initials: string };
   participantPreview?: Array<{ kind: 'VISIBLE'; userId: string; name: string; initials: string; avatarMediaAssetId?: string } | { kind: 'ANONYMOUS'; initials: string }>;
   participantRoster?: Array<{ userId: string; name: string; initials: string; avatarMediaAssetId?: string }>;
+  organizerTransfer?: { id: string; direction: 'OUTGOING' | 'INCOMING' };
   isOrganizer: boolean;
   canManageMedia: boolean;
+  canManageEvent: boolean;
   location: { city: string; district: string; venueName: string | null; address: string | null };
   mapLocation?: { latitude: number; longitude: number };
   route?: { mode: 'WALKING' | 'CYCLING' | 'DRIVING'; end: { latitude: number; longitude: number }; geometry?: Array<[longitude: number, latitude: number]>; distanceMeters?: number; durationSeconds?: number };
@@ -38,6 +41,8 @@ export default function EventDetailPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isUploadingMedia, setIsUploadingMedia] = useState(false);
   const [isParticipantDirectoryOpen, setIsParticipantDirectoryOpen] = useState(false);
+  const [isCancelDialogOpen, setIsCancelDialogOpen] = useState(false);
+  const [transferRecipientId, setTransferRecipientId] = useState('');
 
   async function load() {
     setIsLoading(true);
@@ -113,6 +118,41 @@ export default function EventDetailPage() {
     }
   }
 
+  async function requestOrganizerTransfer() {
+    if (!event || !transferRecipientId) return;
+    setIsSubmitting(true); setNotice('');
+    try {
+      const response = await authenticatedFetch(`/api/v1/events/${event.id}/organizer-transfers`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ recipientUserId: transferRecipientId }) });
+      if (!response.ok) throw new Error('Devir teklifi gönderilemedi.');
+      setNotice('Devir teklifi gönderildi. Katılımcının yanıtı bekleniyor.');
+      setTransferRecipientId('');
+      await load();
+    } catch (error) { setNotice(error instanceof Error ? error.message : 'Devir teklifi gönderilemedi.'); } finally { setIsSubmitting(false); }
+  }
+
+  async function respondToOrganizerTransfer(responseChoice: 'ACCEPT' | 'DECLINE') {
+    if (!event?.organizerTransfer) return;
+    setIsSubmitting(true); setNotice('');
+    try {
+      const response = await authenticatedFetch(`/api/v1/events/organizer-transfers/${event.organizerTransfer.id}/respond`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ response: responseChoice }) });
+      if (!response.ok) throw new Error('Devir teklifine yanıt verilemedi.');
+      setNotice(responseChoice === 'ACCEPT' ? 'Organizatörlüğü devraldın.' : 'Devir teklifini reddettin.');
+      await load();
+    } catch (error) { setNotice(error instanceof Error ? error.message : 'Devir teklifine yanıt verilemedi.'); } finally { setIsSubmitting(false); }
+  }
+
+  async function cancelEvent() {
+    if (!event) return;
+    setIsSubmitting(true); setNotice('');
+    try {
+      const response = await authenticatedFetch(`/api/v1/events/${event.id}/cancel`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ expectedVersion: event.version }) });
+      if (!response.ok) throw new Error('Etkinlik iptal edilemedi.');
+      setNotice('Etkinlik iptal edildi.');
+      setIsCancelDialogOpen(false);
+      await load();
+    } catch (error) { setNotice(error instanceof Error ? error.message : 'Etkinlik iptal edilemedi.'); } finally { setIsSubmitting(false); }
+  }
+
   async function uploadMedia(files: FileList | null, role: 'COVER' | 'GALLERY') {
     if (!event || !files?.length) return;
     const accessToken = getAccessToken();
@@ -144,7 +184,8 @@ export default function EventDetailPage() {
   return <AppSidebar>
     <article className="event-detail">
       <p className="auth-eyebrow">{event.location.city} · {event.location.district}</p>
-      <h1 className="discover-title">{event.title}</h1>
+      {event.status === 'CANCELLED' && <p className="event-cancelled-label">İptal edildi</p>}
+      <h1 className={event.status === 'CANCELLED' ? 'discover-title is-cancelled' : 'discover-title'}>{event.title}</h1>
       {event.coverMediaAssetId && <img className="event-detail-cover" src={mediaUrl(event.coverMediaAssetId)} alt={`${event.title} kapak görseli`} onError={(image) => { image.currentTarget.style.display = 'none'; }} />}
       <p className="event-description">{event.description}</p>
       <dl className="event-facts">
@@ -158,8 +199,9 @@ export default function EventDetailPage() {
       {event.participantPreview && <section className="event-participants" aria-labelledby="event-participants-title"><div className="event-participants-header"><div><p className="auth-eyebrow">Katılımcılar</p><h2 id="event-participants-title">Birlikte katılanlar</h2></div><span>{event.capacity.kind === 'LIMITED' ? `${event.capacity.availableSeats} yer kaldı` : 'Sınırsız kontenjan'}</span></div><div className="participant-avatars">{event.participantPreview.map((participant, index) => <div className={participant.kind === 'VISIBLE' ? 'participant-avatar' : 'participant-avatar is-anonymous'} title={participant.kind === 'VISIBLE' ? participant.name : 'Gizli profil'} key={participant.kind === 'VISIBLE' ? participant.userId : `anonymous-${index}`}><span>{participant.initials}</span>{participant.kind === 'VISIBLE' && participant.avatarMediaAssetId && <img src={mediaUrl(participant.avatarMediaAssetId)} alt={participant.name} onError={(image) => { image.currentTarget.style.display = 'none'; }} />}</div>)}</div>{event.isOrganizer && event.participantRoster && <button className="participant-directory-link" type="button" onClick={() => setIsParticipantDirectoryOpen(true)}>Tümünü gör <span>{event.participantRoster.length} kişi</span><b aria-hidden="true">→</b></button>}</section>}
       {event.galleryMediaAssetIds.length > 0 && <section className="event-detail-gallery" aria-label="Etkinlik görselleri">{event.galleryMediaAssetIds.map((mediaAssetId, index) => <img src={mediaUrl(mediaAssetId)} alt={`${event.title} görseli ${index + 1}`} onError={(image) => { image.currentTarget.style.display = 'none'; }} key={mediaAssetId} />)}</section>}
       {event.canManageMedia && <section className="event-media-manager"><strong>Etkinlik görselleri</strong><span>Kapak görselini değiştirebilir veya galeriye en fazla 5 görsel ekleyebilirsin.</span><div><label><span>Kapak değiştir</span><input type="file" accept="image/jpeg,image/png,image/webp" disabled={isUploadingMedia} onChange={(input) => void uploadMedia(input.target.files, 'COVER')} /></label><label><span>Galeriye ekle</span><input type="file" accept="image/jpeg,image/png,image/webp" multiple disabled={isUploadingMedia} onChange={(input) => void uploadMedia(input.target.files, 'GALLERY')} /></label></div>{isUploadingMedia && <em>Görseller güncelleniyor…</em>}</section>}
-      {event.ownAttendanceStatus ? <section className="attendance-state" aria-label="Katılım yanıtın"><p className="form-note">Katılım yanıtın</p><div className="attendance-choice-group"><button className={event.ownAttendanceStatus === 'CONFIRMED' ? 'attendance-choice is-active' : 'attendance-choice'} type="button" disabled>{event.ownAttendanceStatus === 'CONFIRMED' ? 'Katılıyorum' : attendanceStatusLabel(event.ownAttendanceStatus)}</button>{['CONFIRMED', 'PENDING', 'WAITLISTED'].includes(event.ownAttendanceStatus) && <button className="attendance-choice" type="button" onClick={() => void cancelAttendance()} disabled={isSubmitting}>{isSubmitting ? 'İşleniyor…' : 'Katılmıyorum'}</button>}</div></section> : event.joinAvailable && <section className="attendance-state" aria-label="Katılım yanıtın"><p className="form-note">Katılım yanıtın</p><div className="attendance-choice-group"><button className="attendance-choice is-action" type="button" onClick={() => void rsvp()} disabled={isSubmitting}>{isSubmitting ? 'İşleniyor…' : event.capacity.kind === 'LIMITED' && event.capacity.availableSeats === 0 ? 'Bekleme listesine katıl' : 'Katılıyorum'}</button><span className="attendance-choice is-muted">Henüz yanıt vermedin</span></div></section>}
+      {event.status === 'CANCELLED' ? <section className="event-status-card is-cancelled"><strong>İptal edildi</strong><span>Bu plan gerçekleşmeyecek; kayıtlarında görünür kalacak.</span></section> : event.isOrganizer && event.canManageEvent ? <section className="event-management" aria-label="Organizatör işlemleri"><p className="form-note">Organizatörsün</p>{event.organizerTransfer?.direction === 'OUTGOING' ? <p className="event-management-note">Devir teklifi gönderildi. Katılımcının yanıtı bekleniyor.</p> : <div className="event-management-actions">{event.participantRoster && event.participantRoster.length > 1 && <label><span>Organizatörlüğü devret</span><select value={transferRecipientId} onChange={(input) => setTransferRecipientId(input.target.value)} disabled={isSubmitting}><option value="">Katılımcı seç</option>{event.participantRoster.filter((participant) => event.organizerPreview.kind !== 'VISIBLE' || participant.userId !== event.organizerPreview.userId).map((participant) => <option value={participant.userId} key={participant.userId}>{participant.name}</option>)}</select><button className="secondary-button" type="button" onClick={() => void requestOrganizerTransfer()} disabled={isSubmitting || !transferRecipientId}>{isSubmitting ? 'Gönderiliyor…' : 'Devir teklifi gönder'}</button></label>}<button className="danger-button" type="button" onClick={() => setIsCancelDialogOpen(true)} disabled={isSubmitting}>Etkinliği iptal et</button></div>}</section> : event.isOrganizer ? <section className="event-management"><p className="form-note">Organizatörsün</p><p className="event-management-note">Bu etkinlik için artık yönetim işlemi yapılamaz.</p></section> : event.organizerTransfer?.direction === 'INCOMING' ? <section className="event-management" aria-label="Organizatörlük devri"><p className="form-note">Organizatörlük devri</p><p className="event-management-note">Bu etkinliğin organizatörlüğü sana devredilmek isteniyor.</p><div className="attendance-choice-group"><button className="attendance-choice is-action" type="button" onClick={() => void respondToOrganizerTransfer('ACCEPT')} disabled={isSubmitting}>Devral</button><button className="attendance-choice" type="button" onClick={() => void respondToOrganizerTransfer('DECLINE')} disabled={isSubmitting}>Reddet</button></div></section> : event.ownAttendanceStatus ? <section className="attendance-state" aria-label="Katılım yanıtın"><p className="form-note">Katılım yanıtın</p><div className="attendance-choice-group"><button className={event.ownAttendanceStatus === 'CONFIRMED' ? 'attendance-choice is-active' : 'attendance-choice'} type="button" disabled>{event.ownAttendanceStatus === 'CONFIRMED' ? 'Katılıyorum' : attendanceStatusLabel(event.ownAttendanceStatus)}</button>{['CONFIRMED', 'PENDING', 'WAITLISTED'].includes(event.ownAttendanceStatus) && <button className="attendance-choice" type="button" onClick={() => void cancelAttendance()} disabled={isSubmitting}>{isSubmitting ? 'İşleniyor…' : 'Katılmıyorum'}</button>}</div></section> : event.joinAvailable && <section className="attendance-state" aria-label="Katılım yanıtın"><p className="form-note">Katılım yanıtın</p><div className="attendance-choice-group"><button className="attendance-choice is-action" type="button" onClick={() => void rsvp()} disabled={isSubmitting}>{isSubmitting ? 'İşleniyor…' : event.capacity.kind === 'LIMITED' && event.capacity.availableSeats === 0 ? 'Bekleme listesine katıl' : 'Katılıyorum'}</button><span className="attendance-choice is-muted">Henüz yanıt vermedin</span></div></section>}
       {notice && <p className="form-note" role="status">{notice}</p>}
+      {isCancelDialogOpen && <div className="participant-directory-backdrop" role="presentation" onMouseDown={() => !isSubmitting && setIsCancelDialogOpen(false)}><section className="event-cancel-dialog" role="dialog" aria-modal="true" aria-labelledby="event-cancel-title" onMouseDown={(click) => click.stopPropagation()}><button className="participant-directory-close" type="button" aria-label="Kapat" onClick={() => setIsCancelDialogOpen(false)} disabled={isSubmitting}>×</button><p className="auth-eyebrow">ETKİNLİĞİ İPTAL ET</p><h2 id="event-cancel-title">Bu plan iptal edilsin mi?</h2><p>Katılımcılar bilgilendirilir. Etkinlik silinmez; takvimde iptal edildi olarak görünmeye devam eder.</p><div><button className="secondary-button" type="button" onClick={() => setIsCancelDialogOpen(false)} disabled={isSubmitting}>Vazgeç</button><button className="danger-button is-solid" type="button" onClick={() => void cancelEvent()} disabled={isSubmitting}>{isSubmitting ? 'İptal ediliyor…' : 'Etkinliği iptal et'}</button></div></section></div>}
       {isParticipantDirectoryOpen && event.participantRoster && <div className="participant-directory-backdrop" role="presentation" onMouseDown={() => setIsParticipantDirectoryOpen(false)}><section className="participant-directory-modal" role="dialog" aria-modal="true" aria-labelledby="participant-directory-title" onMouseDown={(click) => click.stopPropagation()}><button className="participant-directory-close" type="button" aria-label="Kapat" onClick={() => setIsParticipantDirectoryOpen(false)}>×</button><p className="auth-eyebrow">Katılımcılar</p><h2 id="participant-directory-title">{event.participantRoster.length} kişi katılıyor.</h2><div className="participant-directory-list">{event.participantRoster.map((participant) => <div key={participant.userId}><i className="participant-avatar"><b>{participant.initials}</b>{participant.avatarMediaAssetId && <img src={mediaUrl(participant.avatarMediaAssetId)} alt="" onError={(image) => { image.currentTarget.style.display = 'none'; }} />}</i><span>{participant.name}</span></div>)}</div></section></div>}
     </article>
   </AppSidebar>;
