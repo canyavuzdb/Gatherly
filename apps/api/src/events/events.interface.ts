@@ -58,9 +58,23 @@ export type CancelEvent = {
   expectedVersion: number;
 };
 
+export type RequestOrganizerTransfer = {
+  kind: 'REQUEST_ORGANIZER_TRANSFER';
+  eventId: EventId;
+  actorUserId: UserId;
+  recipientUserId: UserId;
+};
+
+export type RespondToOrganizerTransfer = {
+  kind: 'RESPOND_TO_ORGANIZER_TRANSFER';
+  transferId: string;
+  actorUserId: UserId;
+  response: 'ACCEPT' | 'DECLINE';
+};
+
 export type CompleteDueEvents = { kind: 'COMPLETE_DUE_EVENTS' };
 
-export type EventCommand = CreateDraft | ReviseEvent | PublishEvent | CancelEvent | CompleteDueEvents;
+export type EventCommand = CreateDraft | ReviseEvent | PublishEvent | CancelEvent | RequestOrganizerTransfer | RespondToOrganizerTransfer | CompleteDueEvents;
 
 export type EventSnapshot = CompleteEventDefinition & {
   id: EventId;
@@ -102,12 +116,15 @@ export type EventCancelled = {
   capacity: CapacitySnapshot;
 };
 
+export type OrganizerTransferRequested = { kind: 'ORGANIZER_TRANSFER_REQUESTED'; transferId: string };
+export type OrganizerTransferResponded = { kind: 'ORGANIZER_TRANSFER_ACCEPTED' | 'ORGANIZER_TRANSFER_DECLINED'; transferId: string };
+
 export type DueEventsCompleted = {
   kind: 'DUE_EVENTS_COMPLETED';
   completedEventIds: EventId[];
 };
 
-export type EventOutcome = DraftCreated | EventRevised | EventPublished | EventCancelled | DueEventsCompleted;
+export type EventOutcome = DraftCreated | EventRevised | EventPublished | EventCancelled | OrganizerTransferRequested | OrganizerTransferResponded | DueEventsCompleted;
 
 export interface EventModule {
   decide(command: EventCommand): Promise<EventOutcome>;

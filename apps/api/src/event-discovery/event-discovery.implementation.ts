@@ -1,5 +1,5 @@
 import { DataSource, In } from 'typeorm';
-import { AttendanceRecord, CategoryRecord, EventLocationRecord, EventRecord } from '../events/events.persistence';
+import { AttendanceRecord, CategoryRecord, EventLocationRecord, EventOrganizerTransferRecord, EventRecord } from '../events/events.persistence';
 import { ProfileRecord } from '../auth/auth.persistence';
 import { EventDiscoveryBusinessError } from './event-discovery.errors';
 import { InvitationRecord } from '../events/events.persistence';
@@ -27,7 +27,7 @@ export class EventDiscoveryImplementation implements EventDiscoveryModule {
       .innerJoin(CategoryRecord, 'category', 'category.id = event.category_id')
       .select(['event.id AS id', 'event.title AS title', 'event.starts_at AS "startsAt"', 'event.ends_at AS "endsAt"', 'event.timezone AS timezone', 'event.status AS status', 'event.capacity AS capacity', 'event.confirmed_count AS "confirmedCount"', 'category.id AS "categoryId"', 'category.name AS "categoryName"', 'category.is_active AS "categoryIsActive"', 'location.city AS city', 'location.district AS district', 'location.venue_name AS "venueName"', 'location.latitude AS latitude', 'location.longitude AS longitude', 'location.route_mode AS "routeMode"', 'location.address_visibility AS "addressVisibility"'])
       .addSelect((subquery) => subquery.select('cover.media_asset_id').from(EventMediaRecord, 'cover').innerJoin(MediaAssetRecord, 'coverAsset', "coverAsset.id = cover.media_asset_id AND coverAsset.status = 'READY'").where("cover.event_id = event.id AND cover.role = 'COVER'"), 'coverMediaAssetId')
-      .where(scope === 'UPCOMING' ? 'event.status = :status' : "event.status IN ('PUBLISHED', 'CANCELLED', 'COMPLETED')", { status: 'PUBLISHED' }).andWhere('event.visibility = :visibility', { visibility: 'PUBLIC' }).andWhere(scope === 'UPCOMING' ? 'event.starts_at > :now' : 'event.starts_at <= :now', { now: this.now() }).andWhere('location.city = :city', { city });
+      .where(scope === 'UPCOMING' ? "event.status IN ('PUBLISHED', 'CANCELLED')" : "event.status IN ('PUBLISHED', 'CANCELLED', 'COMPLETED')").andWhere('event.visibility = :visibility', { visibility: 'PUBLIC' }).andWhere(scope === 'UPCOMING' ? 'event.starts_at > :now' : 'event.starts_at <= :now', { now: this.now() }).andWhere('location.city = :city', { city });
     if (request.district?.trim()) query.andWhere('location.district = :district', { district: request.district.trim() });
     if (request.categoryId) query.andWhere('event.category_id = :categoryId', { categoryId: request.categoryId });
     if (request.startsAtFrom) query.andWhere('event.starts_at >= :from', { from: request.startsAtFrom });
@@ -59,6 +59,10 @@ export class EventDiscoveryImplementation implements EventDiscoveryModule {
     const hasJoinEligibility = event.joinPolicy !== 'INVITE_ONLY' || Boolean(invitation);
     const participantPreview = organizer || attendance?.status === 'CONFIRMED' ? await this.participantPreview(event.id) : undefined;
     const participantRoster = organizer ? await this.participantRoster(event.id) : undefined;
+    const pendingTransfer = request.viewer ? await this.dataSource.getRepository(EventOrganizerTransferRecord).findOneBy({ eventId: event.id, status: 'PENDING' }) : null;
+    const organizerTransfer = pendingTransfer && (pendingTransfer.fromUserId === request.viewer?.userId || pendingTransfer.toUserId === request.viewer?.userId)
+      ? { id: pendingTransfer.id, direction: pendingTransfer.fromUserId === request.viewer?.userId ? 'OUTGOING' as const : 'INCOMING' as const }
+      : undefined;
     const organizerPreview = await this.organizerPreview(event.organizerId, organizer || attendance?.status === 'CONFIRMED');
     const mapLocation = addressVisible && location.latitude !== null && location.longitude !== null ? { latitude: location.latitude, longitude: location.longitude } : undefined;
     const routeDefinition = addressVisible && location.routeMode !== 'NONE' && location.latitude !== null && location.longitude !== null && location.routeEndLatitude !== null && location.routeEndLongitude !== null
@@ -71,7 +75,8 @@ export class EventDiscoveryImplementation implements EventDiscoveryModule {
       ...(routePath ? { geometry: routePath.coordinates, distanceMeters: routePath.distanceMeters, durationSeconds: routePath.durationSeconds } : {}),
     } : undefined;
     const { route: _routeSummary, ...detailCard } = card;
-    return { ...detailCard, status: event.status, description: event.description, visibility: event.visibility, joinPolicy: event.joinPolicy, ...(invitation?.status === 'PENDING' ? { invitationId: invitation.id } : {}), organizerPreview, ...(participantPreview ? { participantPreview } : {}), ...(participantRoster ? { participantRoster } : {}), ...(mapLocation ? { mapLocation } : {}), ...(route ? { route } : {}), isOrganizer: organizer, location: { ...card.location, address: addressVisible ? location.address : null }, galleryMediaAssetIds: galleryMedia.map((media) => media.mediaAssetId), canManageMedia: organizer && ['DRAFT', 'PUBLISHED'].includes(event.status) && event.startsAt > this.now(), joinAvailable: event.status === 'PUBLISHED' && event.startsAt > this.now() && Boolean(request.viewer) && hasJoinEligibility && (!attendance || attendance.status === 'CANCELLED' || attendance.status === 'REJECTED') };
+    const canManageEvent = organizer && ['DRAFT', 'PUBLISHED'].includes(event.status) && event.startsAt > this.now();
+    return { ...detailCard, status: event.status, version: event.version, description: event.description, visibility: event.visibility, joinPolicy: event.joinPolicy, ...(invitation?.status === 'PENDING' ? { invitationId: invitation.id } : {}), organizerPreview, ...(participantPreview ? { participantPreview } : {}), ...(participantRoster ? { participantRoster } : {}), ...(organizerTransfer ? { organizerTransfer } : {}), ...(mapLocation ? { mapLocation } : {}), ...(route ? { route } : {}), isOrganizer: organizer, location: { ...card.location, address: addressVisible ? location.address : null }, galleryMediaAssetIds: galleryMedia.map((media) => media.mediaAssetId), canManageMedia: canManageEvent, canManageEvent, joinAvailable: event.status === 'PUBLISHED' && event.startsAt > this.now() && Boolean(request.viewer) && hasJoinEligibility && (!attendance || attendance.status === 'CANCELLED' || attendance.status === 'REJECTED') };
   }
   async personalCalendar(request: PersonalCalendar): Promise<CalendarPage> {
     const limit = request.limit ?? 20;

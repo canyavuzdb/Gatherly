@@ -222,3 +222,17 @@ export class InvitationRecord {
   @Column({ name: 'updated_by_kind', type: 'varchar' }) updatedByKind!: 'USER' | 'SYSTEM';
   @Column({ type: 'integer' }) version!: number;
 }
+
+@Entity('event_organizer_transfers')
+export class EventOrganizerTransferRecord {
+  @PrimaryGeneratedColumn('uuid') id!: string;
+  @Column({ name: 'event_id', type: 'uuid' }) eventId!: string;
+  @Column({ name: 'from_user_id', type: 'uuid' }) fromUserId!: string;
+  @Column({ name: 'to_user_id', type: 'uuid' }) toUserId!: string;
+  @Column({ type: 'varchar' }) status!: 'PENDING' | 'ACCEPTED' | 'DECLINED' | 'REVOKED';
+  @Column({ name: 'responded_at', type: 'timestamptz', nullable: true }) respondedAt!: Date | null;
+  @Column({ name: 'updated_by_user_id', type: 'uuid', nullable: true }) updatedByUserId!: string | null;
+  @Column({ name: 'updated_by_kind', type: 'varchar' }) updatedByKind!: 'USER' | 'SYSTEM';
+  @Column({ type: 'integer' }) version!: number;
+  @CreateDateColumn({ name: 'created_at', type: 'timestamptz' }) createdAt!: Date;
+}

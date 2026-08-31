@@ -14,6 +14,7 @@ import {
   CategoryRecord,
   EventCreationQuotaUsageRecord,
   EventLocationRecord,
+  EventOrganizerTransferRecord,
   EventRecord,
 } from './events.persistence';
 
@@ -26,6 +27,7 @@ import {
       EventLocationRecord,
       EventCreationQuotaUsageRecord,
       AttendanceRecord,
+      EventOrganizerTransferRecord,
     ]),
   ],
   controllers: [EventsHttpController],

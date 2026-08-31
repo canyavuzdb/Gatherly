@@ -118,6 +118,16 @@ class VersionedRequest {
   expectedVersion!: number;
 }
 
+class OrganizerTransferRequest {
+  @IsUUID()
+  recipientUserId!: string;
+}
+
+class OrganizerTransferResponseRequest {
+  @IsIn(['ACCEPT', 'DECLINE'])
+  response!: 'ACCEPT' | 'DECLINE';
+}
+
 class ReviseEventRequest extends CreateDraftRequest {
   @IsInt()
   @Min(1)
@@ -195,6 +205,30 @@ export class EventsHttpController {
   ) {
     return this.withActor(authorization, (actorUserId) => this.events.decide({
       kind: 'CANCEL_EVENT', eventId, actorUserId, expectedVersion: request.expectedVersion,
+    }));
+  }
+
+  @Post(':eventId/organizer-transfers')
+  @HttpCode(HttpStatus.OK)
+  async requestOrganizerTransfer(
+    @Headers('authorization') authorization: string | undefined,
+    @Param('eventId') eventId: string,
+    @Body() request: OrganizerTransferRequest,
+  ) {
+    return this.withActor(authorization, (actorUserId) => this.events.decide({
+      kind: 'REQUEST_ORGANIZER_TRANSFER', eventId, actorUserId, recipientUserId: request.recipientUserId,
+    }));
+  }
+
+  @Post('organizer-transfers/:transferId/respond')
+  @HttpCode(HttpStatus.OK)
+  async respondToOrganizerTransfer(
+    @Headers('authorization') authorization: string | undefined,
+    @Param('transferId') transferId: string,
+    @Body() request: OrganizerTransferResponseRequest,
+  ) {
+    return this.withActor(authorization, (actorUserId) => this.events.decide({
+      kind: 'RESPOND_TO_ORGANIZER_TRANSFER', transferId, actorUserId, response: request.response,
     }));
   }
 

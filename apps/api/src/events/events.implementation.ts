@@ -16,6 +16,8 @@ import type {
   EventOutcome,
   EventSnapshot,
   PublishEvent,
+  RequestOrganizerTransfer,
+  RespondToOrganizerTransfer,
   ReviseEvent,
 } from './events.interface';
 import {
@@ -23,6 +25,7 @@ import {
   CategoryRecord,
   EventCreationQuotaUsageRecord,
   EventLocationRecord,
+  EventOrganizerTransferRecord,
   EventRecord,
   InvitationRecord,
 } from './events.persistence';
@@ -50,6 +53,8 @@ export class EventsImplementation implements EventModule {
     if (command.kind === 'CREATE_DRAFT') return this.createDraft(command);
     if (command.kind === 'PUBLISH_EVENT') return this.emitPublicChange(await this.publishEvent(command), 'EVENT');
     if (command.kind === 'CANCEL_EVENT') { const outcome = await this.cancelEvent(command); if (outcome.kind === 'EVENT_CANCELLED') await this.publishEventFact('event.cancelled.v1', outcome.event.id, command.actorUserId, outcome.event.version); return this.emitPublicChange(outcome, 'EVENT'); }
+    if (command.kind === 'REQUEST_ORGANIZER_TRANSFER') return this.requestOrganizerTransfer(command);
+    if (command.kind === 'RESPOND_TO_ORGANIZER_TRANSFER') return this.respondToOrganizerTransfer(command);
     if (command.kind === 'COMPLETE_DUE_EVENTS') return this.completeDueEvents(command);
     const outcome = await this.reviseEvent(command); if (outcome.kind === 'EVENT_REVISED') await this.publishEventFact('event.revised.v1', outcome.event.id, command.actorUserId, outcome.event.version); return this.emitPublicChange(outcome, 'EVENT');
   }
@@ -112,8 +117,65 @@ export class EventsImplementation implements EventModule {
         }
         await manager.save(pendingInvitations);
       }
+      const pendingTransfers = await manager.findBy(EventOrganizerTransferRecord, { eventId: event.id, status: 'PENDING' });
+      if (pendingTransfers.length) {
+        const now = this.now();
+        for (const transfer of pendingTransfers) {
+          transfer.status = 'REVOKED'; transfer.respondedAt = now; transfer.updatedByUserId = command.actorUserId; transfer.updatedByKind = 'USER'; transfer.version += 1;
+        }
+        await manager.save(pendingTransfers);
+      }
       return { ...draftOutcome(event, location), kind: 'EVENT_CANCELLED' };
     });
+  }
+
+  private async requestOrganizerTransfer(command: RequestOrganizerTransfer) {
+    const transfer = await this.dataSource.transaction(async (manager) => {
+      const event = await manager.findOne(EventRecord, { where: { id: command.eventId }, lock: { mode: 'pessimistic_write' } });
+      if (!event || event.organizerId !== command.actorUserId) throw new EventsBusinessError('NOT_ORGANIZER');
+      if (event.status !== 'PUBLISHED' || event.startsAt <= this.now()) throw new EventsBusinessError('EVENT_NOT_TRANSFERABLE');
+      const recipientAttendance = await manager.findOneBy(AttendanceRecord, { eventId: event.id, userId: command.recipientUserId });
+      if (!recipientAttendance || recipientAttendance.status !== 'CONFIRMED' || command.recipientUserId === event.organizerId) throw new EventsBusinessError('INVALID_ORGANIZER_TRANSFER');
+      const existing = await manager.findOne(EventOrganizerTransferRecord, { where: { eventId: event.id, status: 'PENDING' }, lock: { mode: 'pessimistic_write' } });
+      if (existing) {
+        existing.status = 'REVOKED'; existing.respondedAt = this.now(); existing.updatedByUserId = command.actorUserId; existing.updatedByKind = 'USER'; existing.version += 1;
+        await manager.save(existing);
+      }
+      return manager.save(manager.create(EventOrganizerTransferRecord, { eventId: event.id, fromUserId: command.actorUserId, toUserId: command.recipientUserId, status: 'PENDING', respondedAt: null, updatedByUserId: command.actorUserId, updatedByKind: 'USER', version: 1 }));
+    });
+    await this.publishOrganizerTransferFact('organizer-transfer.requested.v1', transfer, 'Organizatörlük devri', 'Bu etkinliğin organizatörlüğü sana devredilmek isteniyor.');
+    return { kind: 'ORGANIZER_TRANSFER_REQUESTED' as const, transferId: transfer.id };
+  }
+
+  private async respondToOrganizerTransfer(command: RespondToOrganizerTransfer) {
+    const result = await this.dataSource.transaction(async (manager) => {
+      const transfer = await manager.findOne(EventOrganizerTransferRecord, { where: { id: command.transferId }, lock: { mode: 'pessimistic_write' } });
+      if (!transfer || transfer.status !== 'PENDING' || transfer.toUserId !== command.actorUserId) throw new EventsBusinessError('INVALID_ORGANIZER_TRANSFER');
+      const event = await manager.findOne(EventRecord, { where: { id: transfer.eventId }, lock: { mode: 'pessimistic_write' } });
+      const attendee = event ? await manager.findOneBy(AttendanceRecord, { eventId: event.id, userId: command.actorUserId }) : null;
+      if (!event || event.organizerId !== transfer.fromUserId || event.status !== 'PUBLISHED' || event.startsAt <= this.now() || attendee?.status !== 'CONFIRMED') throw new EventsBusinessError('EVENT_NOT_TRANSFERABLE');
+      transfer.status = command.response === 'ACCEPT' ? 'ACCEPTED' : 'DECLINED'; transfer.respondedAt = this.now(); transfer.updatedByUserId = command.actorUserId; transfer.updatedByKind = 'USER'; transfer.version += 1;
+      await manager.save(transfer);
+      if (command.response === 'ACCEPT') {
+        event.organizerId = command.actorUserId; event.updatedByUserId = command.actorUserId; event.updatedByKind = 'USER'; event.version += 1;
+        await manager.save(event);
+      }
+      return { transfer, event };
+    });
+    await this.publishOrganizerTransferFact(
+      command.response === 'ACCEPT' ? 'organizer-transfer.accepted.v1' : 'organizer-transfer.declined.v1',
+      result.transfer,
+      command.response === 'ACCEPT' ? 'Organizatörlük devri kabul edildi' : 'Organizatörlük devri reddedildi',
+      command.response === 'ACCEPT' ? 'Etkinliğin organizatörlüğü artık yeni katılımcıda.' : 'Etkinlik organizatörlüğü sende kalıyor.',
+    );
+    if (command.response === 'ACCEPT' && result.event.visibility === 'PUBLIC') await this.realtime?.emit({ kind: 'PUBLIC_EVENT_CHANGED', eventId: result.event.id, change: 'EVENT' });
+    return { kind: command.response === 'ACCEPT' ? 'ORGANIZER_TRANSFER_ACCEPTED' as const : 'ORGANIZER_TRANSFER_DECLINED' as const, transferId: result.transfer.id };
+  }
+
+  private async publishOrganizerTransferFact(eventName: 'organizer-transfer.requested.v1' | 'organizer-transfer.accepted.v1' | 'organizer-transfer.declined.v1', transfer: EventOrganizerTransferRecord, title: string, body: string) {
+    if (!this.messaging) return;
+    const recipientUserId = eventName === 'organizer-transfer.requested.v1' ? transfer.toUserId : transfer.fromUserId;
+    await this.messaging.publish([{ messageId: `organizer-transfer:${transfer.id}:${transfer.version}`, eventName, eventVersion: 1, occurredAt: this.now(), correlationId: transfer.id, payload: { recipientUserId, eventId: transfer.eventId, title, body } }]);
   }
 
   private async publishEvent(command: PublishEvent): Promise<EventOutcome> {

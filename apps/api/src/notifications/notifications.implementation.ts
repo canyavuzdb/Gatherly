@@ -35,7 +35,7 @@ export class NotificationsImplementation {
 
   async consume(delivery: NotificationDelivery) {
     if (delivery.eventName === 'event.completed.v1') return { created: false };
-    const types: Record<Exclude<NotificationDelivery['eventName'], 'event.completed.v1'>, string> = { 'invitation.received.v1': 'INVITATION_RECEIVED', 'invitation.revoked.v1': 'INVITATION_REVOKED', 'attendance.pending.v1': 'ATTENDANCE_REQUESTED', 'attendance.confirmed.v1': 'ATTENDANCE_CONFIRMED', 'attendance.rejected.v1': 'ATTENDANCE_REJECTED', 'attendance.waitlisted.v1': 'ATTENDANCE_WAITLISTED', 'attendance.promoted.v1': 'ATTENDANCE_PROMOTED', 'event.revised.v1': 'EVENT_REVISED', 'event.cancelled.v1': 'EVENT_CANCELLED' };
+    const types: Record<Exclude<NotificationDelivery['eventName'], 'event.completed.v1'>, string> = { 'invitation.received.v1': 'INVITATION_RECEIVED', 'invitation.revoked.v1': 'INVITATION_REVOKED', 'attendance.pending.v1': 'ATTENDANCE_REQUESTED', 'attendance.confirmed.v1': 'ATTENDANCE_CONFIRMED', 'attendance.rejected.v1': 'ATTENDANCE_REJECTED', 'attendance.waitlisted.v1': 'ATTENDANCE_WAITLISTED', 'attendance.promoted.v1': 'ATTENDANCE_PROMOTED', 'event.revised.v1': 'EVENT_REVISED', 'event.cancelled.v1': 'EVENT_CANCELLED', 'organizer-transfer.requested.v1': 'ORGANIZER_TRANSFER_RECEIVED', 'organizer-transfer.accepted.v1': 'ORGANIZER_TRANSFER_ACCEPTED', 'organizer-transfer.declined.v1': 'ORGANIZER_TRANSFER_DECLINED' };
     const recipientUserIds = delivery.eventName.startsWith('event.') ? await this.activeAttendeeIds(delivery.payload.eventId, delivery.payload.recipientUserId) : [delivery.payload.recipientUserId];
     let created = false;
     for (const recipientUserId of recipientUserIds) {
