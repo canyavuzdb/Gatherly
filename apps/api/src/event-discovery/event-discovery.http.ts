@@ -69,7 +69,7 @@ export class EventDiscoveryHttpController {
   ) {
     const viewer = await this.optionalViewer(authorization);
     try {
-      return await this.discovery.discover({ viewer, ...query, scope: query.scope === undefined || query.scope === 'UPCOMING' || query.scope === 'PAST' ? query.scope : (() => { throw new EventDiscoveryBusinessError('INVALID_DISCOVERY_FILTER'); })() });
+      return await this.discovery.discover({ viewer, ...query, scope: query.scope === undefined || ['UPCOMING', 'LIVE', 'PAST'].includes(query.scope) ? query.scope as 'UPCOMING' | 'LIVE' | 'PAST' | undefined : (() => { throw new EventDiscoveryBusinessError('INVALID_DISCOVERY_FILTER'); })() });
     } catch (error) {
       if (error instanceof EventDiscoveryBusinessError) throw new BadRequestException(error.code);
       throw error;
@@ -89,7 +89,7 @@ export class EventDiscoveryHttpController {
     try {
       return await this.discovery.personalCalendar({
         actor: await this.auth.authenticate(accessToken),
-        scope: scope === undefined || scope === 'UPCOMING' || scope === 'PAST' ? scope : (() => { throw new EventDiscoveryBusinessError('INVALID_DISCOVERY_FILTER'); })(),
+        scope: scope === undefined || ['UPCOMING', 'LIVE', 'PAST'].includes(scope) ? scope as 'UPCOMING' | 'LIVE' | 'PAST' | undefined : (() => { throw new EventDiscoveryBusinessError('INVALID_DISCOVERY_FILTER'); })(),
         after,
         limit: limit === undefined ? undefined : Number(limit),
       });

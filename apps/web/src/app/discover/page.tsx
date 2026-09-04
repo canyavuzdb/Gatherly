@@ -23,7 +23,7 @@ type EventCard = {
 };
 
 type DiscoveryPage = { items: EventCard[]; activeCategories: Array<{ id: string; name: string }> };
-type Scope = 'UPCOMING' | 'PAST';
+type Scope = 'UPCOMING' | 'LIVE' | 'PAST';
 type ViewMode = 'FEED' | 'MAP';
 
 export default function DiscoverPage() {
@@ -79,7 +79,7 @@ export default function DiscoverPage() {
     <AppSidebar>
       <section className="discover-stage">
         <header className="discover-header">
-          <div><p className="auth-eyebrow">Keşfet</p><h1 className="discover-title">Şehirde buluş.</h1><p>{scope === 'UPCOMING' ? 'Yaklaşan Public etkinlikler, en yakın saatten başlayarak tek akışta.' : 'Şehirde daha önce gerçekleşmiş Public etkinlikler.'}</p></div>
+          <div><p className="auth-eyebrow">Keşfet</p><h1 className="discover-title">Şehirde buluş.</h1><p>{scope === 'UPCOMING' ? 'Yaklaşan Public etkinlikler, en yakın saatten başlayarak tek akışta.' : scope === 'LIVE' ? 'Şu anda devam eden Public etkinlikler.' : 'Şehirde daha önce gerçekleşmiş Public etkinlikler.'}</p></div>
           <CityPicker value={city} onValueChange={selectCity} isLoading={isLoading} />
         </header>
         <div className="discover-filters" aria-label="Etkinlik filtreleri">
@@ -87,7 +87,7 @@ export default function DiscoverPage() {
           <div className="discover-filter-actions"><label className="discover-category-select"><span>Kategori</span><select value={categoryId ?? ''} onChange={(event) => selectCategory(event.target.value || null)} disabled={isLoading}><option value="">Tüm kategoriler</option>{categories.map((category) => <option value={category.id} key={category.id}>{category.name}</option>)}</select></label><button className="discover-map-toggle" type="button" aria-pressed={viewMode === 'MAP'} onClick={() => setViewMode(viewMode === 'FEED' ? 'MAP' : 'FEED')}>{viewMode === 'MAP' ? 'Akışa dön' : 'Haritada gör'} <span aria-hidden="true">{viewMode === 'MAP' ? '→' : '↗'}</span></button></div>
         </div>
         {notice && <p className="form-note" role="alert">{notice}</p>}
-        {!isLoading && !notice && events.length === 0 && <p className="empty-state">Bu şehirde {scope === 'UPCOMING' ? 'yaklaşan' : 'geçmiş'} Public etkinlik bulunmuyor.</p>}
+        {!isLoading && !notice && events.length === 0 && <p className="empty-state">Bu şehirde {scope === 'UPCOMING' ? 'yaklaşan' : scope === 'LIVE' ? 'devam eden' : 'geçmiş'} Public etkinlik bulunmuyor.</p>}
         {viewMode === 'MAP' ? <div className="discover-map-view"><EventMap events={events} onEventSelect={setSelectedMapEventId} />{selectedMapEvent && <DiscoverEvent event={selectedMapEvent} />}</div> : <div className="discover-feed">
           {days.map((day) => <section className="discover-day" key={day.key}><h2>{formatDay(day.date)}</h2><div>{day.items.map((event) => <DiscoverEvent event={event} key={event.id} />)}</div></section>)}
         </div>}
@@ -97,7 +97,7 @@ export default function DiscoverPage() {
 }
 
 function ScopePicker({ scope, count, isLoading, onSelect }: { scope: Scope; count: number; isLoading: boolean; onSelect: (scope: Scope) => void }) {
-  return <div className="content-scope" role="tablist" aria-label="Etkinlik zaman aralığı"><button className={scope === 'UPCOMING' ? 'is-active' : ''} type="button" role="tab" aria-selected={scope === 'UPCOMING'} onClick={() => onSelect('UPCOMING')} disabled={isLoading}>Yaklaşan{scope === 'UPCOMING' && <small>{count}</small>}</button><button className={scope === 'PAST' ? 'is-active' : ''} type="button" role="tab" aria-selected={scope === 'PAST'} onClick={() => onSelect('PAST')} disabled={isLoading}>Geçmiş{scope === 'PAST' && <small>{count}</small>}</button></div>;
+  return <div className="content-scope" role="tablist" aria-label="Etkinlik zaman aralığı"><button className={scope === 'UPCOMING' ? 'is-active' : ''} type="button" role="tab" aria-selected={scope === 'UPCOMING'} onClick={() => onSelect('UPCOMING')} disabled={isLoading}>Yaklaşan{scope === 'UPCOMING' && <small>{count}</small>}</button><button className={scope === 'LIVE' ? 'is-active' : ''} type="button" role="tab" aria-selected={scope === 'LIVE'} onClick={() => onSelect('LIVE')} disabled={isLoading}>Devam ediyor{scope === 'LIVE' && <small>{count}</small>}</button><button className={scope === 'PAST' ? 'is-active' : ''} type="button" role="tab" aria-selected={scope === 'PAST'} onClick={() => onSelect('PAST')} disabled={isLoading}>Geçmiş{scope === 'PAST' && <small>{count}</small>}</button></div>;
 }
 
 function DiscoverEvent({ event }: { event: EventCard }) {
