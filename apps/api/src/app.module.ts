@@ -17,6 +17,7 @@ import { UsersNestModule } from './users/users.module';
 import { RealtimeNestModule } from './realtime/realtime.module';
 import { LocationSearchNestModule } from './location-search/location-search.module';
 import { ParticipationNestModule } from './participation/participation.module';
+import { FeedbackNestModule } from './feedback/feedback.module';
 
 @Module({
   imports: [
@@ -47,6 +48,7 @@ import { ParticipationNestModule } from './participation/participation.module';
     MediaNestModule,
     AttendanceNestModule,
     ParticipationNestModule,
+    FeedbackNestModule,
     LocationSearchNestModule,
   ],
   controllers: [AppController],

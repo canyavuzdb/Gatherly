@@ -1,0 +1,5 @@
+import type { MigrationInterface, QueryRunner } from 'typeorm';
+export class AddEventReviews1768900000000 implements MigrationInterface {
+  async up(q: QueryRunner): Promise<void> { await q.query("CREATE TYPE review_subject AS ENUM ('EVENT','ORGANIZER')"); await q.query("CREATE TABLE event_reviews (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), event_id uuid NOT NULL REFERENCES events(id), author_user_id uuid NOT NULL REFERENCES users(id), subject review_subject NOT NULL, rating integer NOT NULL CHECK (rating BETWEEN 1 AND 5), comment varchar(500) NULL, supersedes_review_id uuid NULL REFERENCES event_reviews(id), created_at timestamptz NOT NULL DEFAULT now(), CHECK ((supersedes_review_id IS NULL) OR (supersedes_review_id <> id)))"); await q.query('CREATE INDEX event_reviews_event_subject_created_idx ON event_reviews(event_id, subject, created_at DESC, id DESC)'); }
+  async down(q: QueryRunner): Promise<void> { await q.query('DROP TABLE event_reviews'); await q.query('DROP TYPE review_subject'); }
+}
