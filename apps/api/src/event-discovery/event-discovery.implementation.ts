@@ -5,6 +5,7 @@ import { EventDiscoveryBusinessError } from './event-discovery.errors';
 import { InvitationRecord } from '../events/events.persistence';
 import { EventMediaRecord, MediaAssetRecord } from '../media/media.persistence';
 import { canonicalEventCity } from '../events/event-city';
+import { CheckInRecord, ParticipationOutcomeRecord } from '../participation/participation.persistence';
 import type { EventRoutingModule } from '../event-routing/event-routing.interface';
 import type { CalendarEventCard, CalendarPage, DiscoverEvents, EventCard, EventDetail, EventDiscoveryModule, EventPage, OpenEvent, PersonalCalendar } from './event-discovery.interface';
 type Cursor = { startsAt: string; id: string; filter: string };
@@ -80,8 +81,10 @@ export class EventDiscoveryImplementation implements EventDiscoveryModule {
       ...(routePath ? { geometry: routePath.coordinates, distanceMeters: routePath.distanceMeters, durationSeconds: routePath.durationSeconds } : {}),
     } : undefined;
     const { route: _routeSummary, ...detailCard } = card;
-    const canManageEvent = organizer && ['DRAFT', 'PUBLISHED'].includes(event.status) && event.startsAt > this.now();
-    return { ...detailCard, status: event.status, version: event.version, description: event.description, visibility: event.visibility, joinPolicy: event.joinPolicy, ...(invitation?.status === 'PENDING' ? { invitationId: invitation.id } : {}), organizerPreview, ...(participantPreview ? { participantPreview } : {}), ...(participantRoster ? { participantRoster } : {}), ...(maybeRoster ? { maybeRoster } : {}), waitlistCount, ...(waitlistPosition ? { waitlistPosition } : {}), ...(organizerTransfer ? { organizerTransfer } : {}), ...(mapLocation ? { mapLocation } : {}), ...(route ? { route } : {}), isOrganizer: organizer, location: { ...card.location, address: addressVisible ? location.address : null }, galleryMediaAssetIds: galleryMedia.map((media) => media.mediaAssetId), canManageMedia: canManageEvent, canManageEvent, joinAvailable: event.status === 'PUBLISHED' && event.startsAt > this.now() && Boolean(request.viewer) && hasJoinEligibility && (!attendance || attendance.status === 'CANCELLED' || attendance.status === 'MAYBE') };
+    const now = this.now();
+    const canManageEvent = organizer && ['DRAFT', 'PUBLISHED'].includes(event.status) && event.startsAt > now;
+    const canCheckIn = organizer && event.status !== 'CANCELLED' && now.getTime() >= new Date(event.startsAt).getTime() - 30 * 60 * 1000 && now.getTime() <= new Date(event.endsAt).getTime() + 2 * 60 * 60 * 1000;
+    return { ...detailCard, status: event.status, version: event.version, description: event.description, visibility: event.visibility, joinPolicy: event.joinPolicy, ...(invitation?.status === 'PENDING' ? { invitationId: invitation.id } : {}), organizerPreview, ...(participantPreview ? { participantPreview } : {}), ...(participantRoster ? { participantRoster } : {}), ...(maybeRoster ? { maybeRoster } : {}), waitlistCount, ...(waitlistPosition ? { waitlistPosition } : {}), ...(organizerTransfer ? { organizerTransfer } : {}), ...(mapLocation ? { mapLocation } : {}), ...(route ? { route } : {}), isOrganizer: organizer, location: { ...card.location, address: addressVisible ? location.address : null }, galleryMediaAssetIds: galleryMedia.map((media) => media.mediaAssetId), canManageMedia: canManageEvent, canManageEvent, canCheckIn, joinAvailable: event.status === 'PUBLISHED' && event.startsAt > now && Boolean(request.viewer) && hasJoinEligibility && (!attendance || attendance.status === 'CANCELLED' || attendance.status === 'MAYBE') };
   }
   async personalCalendar(request: PersonalCalendar): Promise<CalendarPage> {
     const limit = request.limit ?? 20;
@@ -124,14 +127,21 @@ export class EventDiscoveryImplementation implements EventDiscoveryModule {
   }
   private async participantRoster(eventId: string, status: 'CONFIRMED' | 'MAYBE') {
     const attendees = await this.dataSource.getRepository(AttendanceRecord).find({ where: { eventId, status }, order: { requestedAt: 'ASC', id: 'ASC' }, take: 50 });
+    const presenceRecords = status === 'CONFIRMED' ? await this.dataSource.getRepository(CheckInRecord).find({ where: { eventId }, order: { createdAt: 'ASC', id: 'ASC' } }) : [];
+    const outcomes = status === 'CONFIRMED' ? await this.dataSource.getRepository(ParticipationOutcomeRecord).findBy({ eventId }) : [];
+    const presenceByAttendanceId = new Map<string, { presence: 'PRESENT' | 'ABSENT' | 'UNSET'; checkedInAt?: Date }>();
+    for (const record of presenceRecords) presenceByAttendanceId.set(record.attendanceId, record.kind === 'CHECKED_IN' ? { presence: 'PRESENT', checkedInAt: record.createdAt } : record.kind === 'MARKED_ABSENT' ? { presence: 'ABSENT' } : { presence: 'UNSET' });
+    const outcomeByAttendanceId = new Map(outcomes.map((outcome) => [outcome.attendanceId, outcome]));
     const profiles = attendees.length ? await this.dataSource.getRepository(ProfileRecord).findBy({ userId: In(attendees.map((attendee) => attendee.userId)) }) : [];
     const profilesByUserId = new Map(profiles.map((profile) => [profile.userId, profile]));
     return attendees.map((attendee, index) => {
       const profile = profilesByUserId.get(attendee.userId);
-      if (!profile) return { userId: attendee.userId, name: `Katılımcı ${index + 1}`, initials: `K${index + 1}` };
+      const currentPresence = presenceByAttendanceId.get(attendee.id) ?? { presence: 'UNSET' as const };
+      const participation = { attendanceId: attendee.id, ...currentPresence, ...(outcomeByAttendanceId.get(attendee.id) ? { participationOutcome: outcomeByAttendanceId.get(attendee.id)!.outcome } : {}) };
+      if (!profile) return { ...participation, userId: attendee.userId, name: `Katılımcı ${index + 1}`, initials: `K${index + 1}` };
       const name = `${profile.firstName} ${profile.lastName}`.trim();
       const initials = `${profile.firstName[0] ?? ''}${profile.lastName[0] ?? ''}`.toLocaleUpperCase('tr-TR') || `K${index + 1}`;
-      return { userId: profile.userId, name, initials, ...(profile.avatarMediaAssetId ? { avatarMediaAssetId: profile.avatarMediaAssetId } : {}) };
+      return { ...participation, userId: profile.userId, name, initials, ...(profile.avatarMediaAssetId ? { avatarMediaAssetId: profile.avatarMediaAssetId } : {}) };
     });
   }
   private card(row: Record<string, unknown>): EventCard { const capacity = row.capacity === null ? { kind: 'UNLIMITED' as const } : { kind: 'LIMITED' as const, capacity: Number(row.capacity), confirmedCount: Number(row.confirmedCount), availableSeats: Number(row.capacity) - Number(row.confirmedCount) }; const mapLocation = row.addressVisibility === 'EVENT_VIEWERS' && row.latitude !== null && row.longitude !== null ? { latitude: Number(row.latitude), longitude: Number(row.longitude) } : undefined; const route = row.routeMode && row.routeMode !== 'NONE' ? { mode: row.routeMode as NonNullable<EventCard['route']>['mode'] } : undefined; return { id: String(row.id), title: String(row.title), startsAt: new Date(String(row.startsAt)), endsAt: new Date(String(row.endsAt)), timezone: String(row.timezone), status: row.status as EventCard['status'], category: { id: String(row.categoryId), name: String(row.categoryName), isActive: Boolean(row.categoryIsActive) }, location: { city: String(row.city), district: String(row.district), venueName: row.venueName === null ? null : String(row.venueName) }, ...(mapLocation ? { mapLocation } : {}), ...(route ? { route } : {}), capacity, ...(row.coverMediaAssetId ? { coverMediaAssetId: String(row.coverMediaAssetId) } : {}), ...(row.ownAttendanceStatus ? { ownAttendanceStatus: row.ownAttendanceStatus as EventCard['ownAttendanceStatus'] } : {}) }; }

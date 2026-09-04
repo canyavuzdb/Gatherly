@@ -16,6 +16,7 @@ This directory records the product and engineering decisions that make the appli
 - [Users and Profile](./modules/users.md)
 - [Events](./modules/events.md)
 - [Attendance](./modules/attendance.md)
+- [Participation and check-in](./modules/participation.md)
 - [Event discovery](./modules/event-discovery.md)
 - [Media](./modules/media.md)
 - [Notifications, messaging, and realtime](./modules/notifications.md)

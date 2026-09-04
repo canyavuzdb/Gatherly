@@ -5,10 +5,11 @@ import { AuthNestModule } from '../auth/auth.module';
 import { EventRoutingNestModule } from '../event-routing/event-routing.module';
 import { OpenRouteServiceEventRoutingImplementation } from '../event-routing/event-routing.implementation';
 import { AttendanceRecord, CategoryRecord, EventLocationRecord, EventOrganizerTransferRecord, EventRecord } from '../events/events.persistence';
+import { CheckInRecord, ParticipationOutcomeRecord } from '../participation/participation.persistence';
 import { EventDiscoveryHttpController } from './event-discovery.http';
 import { EventDiscoveryImplementation } from './event-discovery.implementation';
 @Module({
-  imports: [AuthNestModule, EventRoutingNestModule, TypeOrmModule.forFeature([EventRecord, EventLocationRecord, CategoryRecord, AttendanceRecord, EventOrganizerTransferRecord])],
+  imports: [AuthNestModule, EventRoutingNestModule, TypeOrmModule.forFeature([EventRecord, EventLocationRecord, CategoryRecord, AttendanceRecord, EventOrganizerTransferRecord, CheckInRecord, ParticipationOutcomeRecord])],
   controllers: [EventDiscoveryHttpController],
   providers: [{
     provide: EventDiscoveryImplementation,
