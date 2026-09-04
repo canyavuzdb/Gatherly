@@ -11,6 +11,7 @@ type EventDetail = {
   title: string;
   description: string;
   startsAt: string;
+  endsAt: string;
   version: number;
   timezone: string;
   status: 'DRAFT' | 'PUBLISHED' | 'CANCELLED' | 'COMPLETED';
@@ -280,7 +281,7 @@ export default function EventDetailPage() {
       {event.coverMediaAssetId && <img className="event-detail-cover" src={mediaUrl(event.coverMediaAssetId)} alt={`${event.title} kapak görseli`} onError={(image) => { image.currentTarget.style.display = 'none'; }} />}
       <p className="event-description">{event.description}</p>
       <dl className="event-facts">
-        <div><dt>Tarih</dt><dd>{new Intl.DateTimeFormat('tr-TR', { dateStyle: 'full', timeStyle: 'short' }).format(new Date(event.startsAt))}</dd></div>
+        <div><dt>Tarih</dt><dd>{formatEventSchedule(event.startsAt, event.endsAt)}</dd></div>
         <div><dt>Mekân</dt><dd>{event.location.venueName ?? 'Mekân yakında açıklanacak'}</dd></div>
         <div><dt>Kontenjan</dt><dd>{availability}</dd></div>
         {event.location.address && <div><dt>Adres</dt><dd>{event.location.address}</dd></div>}
@@ -302,3 +303,12 @@ export default function EventDetailPage() {
 }
 
 function mediaUrl(mediaAssetId: string) { return `${apiUrl}/api/v1/media/${mediaAssetId}`; }
+
+function formatEventSchedule(startsAt: string, endsAt: string) {
+  const start = new Date(startsAt);
+  const end = new Date(endsAt);
+  const sameDay = start.getFullYear() === end.getFullYear() && start.getMonth() === end.getMonth() && start.getDate() === end.getDate();
+  const date = new Intl.DateTimeFormat('tr-TR', { dateStyle: 'full' }).format(start);
+  const time = new Intl.DateTimeFormat('tr-TR', { timeStyle: 'short' });
+  return sameDay ? `${date} · ${time.format(start)} – ${time.format(end)}` : `${date} · ${time.format(start)} – ${new Intl.DateTimeFormat('tr-TR', { dateStyle: 'medium', timeStyle: 'short' }).format(end)}`;
+}
