@@ -22,7 +22,7 @@ type EventDetail = {
   galleryMediaAssetIds: string[];
   organizerPreview: { kind: 'VISIBLE'; userId: string; name: string; initials: string; avatarMediaAssetId?: string } | { kind: 'ANONYMOUS'; initials: string };
   participantPreview?: Array<{ kind: 'VISIBLE'; userId: string; name: string; initials: string; avatarMediaAssetId?: string } | { kind: 'ANONYMOUS'; initials: string }>;
-  participantRoster?: Array<{ userId: string; name: string; initials: string; avatarMediaAssetId?: string }>;
+  participantRoster?: Array<{ attendanceId: string; userId: string; name: string; initials: string; avatarMediaAssetId?: string; presence: 'PRESENT' | 'ABSENT' | 'UNSET'; checkedInAt?: string; participationOutcome?: 'ATTENDED' | 'NO_SHOW' }>;
   maybeRoster?: Array<{ userId: string; name: string; initials: string; avatarMediaAssetId?: string }>;
   waitlistPosition?: number;
   waitlistCount: number;
@@ -30,6 +30,7 @@ type EventDetail = {
   isOrganizer: boolean;
   canManageMedia: boolean;
   canManageEvent: boolean;
+  canCheckIn: boolean;
   location: { city: string; district: string; venueName: string | null; address: string | null };
   mapLocation?: { latitude: number; longitude: number };
   route?: { mode: 'WALKING' | 'CYCLING' | 'DRIVING'; end: { latitude: number; longitude: number }; geometry?: Array<[longitude: number, latitude: number]>; distanceMeters?: number; durationSeconds?: number };
@@ -48,8 +49,8 @@ export default function EventDetailPage() {
   const [isWaitlistDialogOpen, setIsWaitlistDialogOpen] = useState(false);
   const [transferRecipientId, setTransferRecipientId] = useState('');
 
-  async function load() {
-    setIsLoading(true);
+  async function load(showLoading = true) {
+    if (showLoading) setIsLoading(true);
     setNotice('');
     try {
       const response = await authenticatedFetch(`/api/v1/events/${eventId}`);
@@ -58,7 +59,7 @@ export default function EventDetailPage() {
     } catch (error) {
       setNotice(error instanceof Error ? error.message : 'Etkinlik yüklenemedi.');
     } finally {
-      setIsLoading(false);
+      if (showLoading) setIsLoading(false);
     }
   }
 
@@ -91,7 +92,7 @@ export default function EventDetailPage() {
         const payload = await response.json().catch(() => null) as { message?: string } | null;
         throw new Error(payload?.message ?? 'Katılım isteği tamamlanamadı.');
       }
-      await load();
+      await load(false);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : 'Katılım isteği tamamlanamadı.');
     } finally {
@@ -182,6 +183,41 @@ export default function EventDetailPage() {
     } catch (error) { setNotice(error instanceof Error ? error.message : 'Etkinlik iptal edilemedi.'); } finally { setIsSubmitting(false); }
   }
 
+  async function checkIn(attendanceId: string) {
+    if (!event) return;
+    setIsSubmitting(true); setNotice('');
+    try {
+      const response = await authenticatedFetch(`/api/v1/events/${event.id}/attendances/${attendanceId}/check-ins`, { method: 'POST' });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null) as { message?: string } | null;
+        throw new Error(payload?.message === 'CHECK_IN_ALREADY_RECORDED' ? 'Bu katılımcı zaten giriş yaptı.' : payload?.message ?? 'Check-in kaydedilemedi.');
+      }
+      setNotice('Check-in kaydedildi.');
+      await load();
+    } catch (error) { setNotice(error instanceof Error ? error.message : 'Check-in kaydedilemedi.'); } finally { setIsSubmitting(false); }
+  }
+
+  async function undoCheckIn(attendanceId: string) {
+    if (!event) return;
+    setIsSubmitting(true); setNotice('');
+    try {
+      const response = await authenticatedFetch(`/api/v1/events/${event.id}/attendances/${attendanceId}/check-ins/revoke`, { method: 'POST' });
+      if (!response.ok) throw new Error('Check-in geri alınamadı.');
+      setNotice('Check-in geri alındı.');
+      await load();
+    } catch (error) { setNotice(error instanceof Error ? error.message : 'Check-in geri alınamadı.'); } finally { setIsSubmitting(false); }
+  }
+
+  async function setPresence(attendanceId: string, presence: 'PRESENT' | 'ABSENT' | 'UNSET') {
+    if (!event || !event.canCheckIn) return;
+    setIsSubmitting(true); setNotice('');
+    try {
+      const response = await authenticatedFetch(`/api/v1/events/${event.id}/attendances/${attendanceId}/presence`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ presence }) });
+      if (!response.ok) throw new Error('Katılım durumu güncellenemedi.');
+      await load(false);
+    } catch (error) { setNotice(error instanceof Error ? error.message : 'Katılım durumu güncellenemedi.'); } finally { setIsSubmitting(false); }
+  }
+
   async function uploadMedia(files: FileList | null, role: 'COVER' | 'GALLERY') {
     if (!event || !files?.length) return;
     const accessToken = getAccessToken();
@@ -227,6 +263,7 @@ export default function EventDetailPage() {
       <section className="event-organizer" aria-label="Etkinlik organizatörü"><div className={event.organizerPreview.kind === 'VISIBLE' ? 'participant-avatar' : 'participant-avatar is-anonymous'}>{<span>{event.organizerPreview.initials}</span>}{event.organizerPreview.kind === 'VISIBLE' && event.organizerPreview.avatarMediaAssetId && <img src={mediaUrl(event.organizerPreview.avatarMediaAssetId)} alt={event.organizerPreview.name} onError={(image) => { image.currentTarget.style.display = 'none'; }} />}</div><div><p className="auth-eyebrow">Organizatör</p><strong>{event.organizerPreview.kind === 'VISIBLE' ? event.organizerPreview.name : 'Gizli profil'}</strong></div></section>
       {event.participantPreview && <section className="event-participants" aria-labelledby="event-participants-title"><div className="event-participants-header"><div><p className="auth-eyebrow">Katılımcılar</p><h2 id="event-participants-title">Birlikte katılanlar</h2></div><span>{event.capacity.kind === 'LIMITED' ? `${event.capacity.availableSeats} yer kaldı` : 'Sınırsız kontenjan'}</span></div><div className="participant-groups"><div className="participant-avatars">{event.participantPreview.map((participant, index) => <div className={participant.kind === 'VISIBLE' ? 'participant-avatar' : 'participant-avatar is-anonymous'} title={participant.kind === 'VISIBLE' ? participant.name : 'Gizli profil'} key={participant.kind === 'VISIBLE' ? participant.userId : `anonymous-${index}`}><span>{participant.initials}</span>{participant.kind === 'VISIBLE' && participant.avatarMediaAssetId && <img src={mediaUrl(participant.avatarMediaAssetId)} alt={participant.name} onError={(image) => { image.currentTarget.style.display = 'none'; }} />}</div>)}</div>{event.isOrganizer && event.maybeRoster && event.maybeRoster.length > 0 && <div className="participant-maybes"><p>Belkiler <span>Kontenjan tutmaz</span></p><div className="participant-avatars">{event.maybeRoster.map((participant) => <div className="participant-avatar" title={participant.name} key={participant.userId}><span>{participant.initials}</span>{participant.avatarMediaAssetId && <img src={mediaUrl(participant.avatarMediaAssetId)} alt={participant.name} onError={(image) => { image.currentTarget.style.display = 'none'; }} />}</div>)}</div></div>}</div>{event.isOrganizer && event.participantRoster && <button className="participant-directory-link" type="button" onClick={() => setIsParticipantDirectoryOpen(true)}>Tümünü gör <span>{event.participantRoster.length} kişi</span><b aria-hidden="true">→</b></button>}</section>}
       {event.galleryMediaAssetIds.length > 0 && <section className="event-detail-gallery" aria-label="Etkinlik görselleri">{event.galleryMediaAssetIds.map((mediaAssetId, index) => <img src={mediaUrl(mediaAssetId)} alt={`${event.title} görseli ${index + 1}`} onError={(image) => { image.currentTarget.style.display = 'none'; }} key={mediaAssetId} />)}</section>}
+      {event.isOrganizer && event.participantRoster && <section className="event-checkin-panel" aria-label="Etkinlik günü katılımı"><header><div><p className="auth-eyebrow">ETKİNLİK GÜNÜ</p><h2>Katılım durumu</h2><p>Kişiye dokunarak sırasıyla geldi, gelmedi ve henüz giriş yok durumları arasında geçiş yap.</p></div><strong>{event.participantRoster.filter((participant) => participant.presence === 'PRESENT').length} / {event.participantRoster.length}<small> geldi</small></strong></header><div className="event-checkin-progress"><i style={{ width: `${event.participantRoster.length ? event.participantRoster.filter((participant) => participant.presence === 'PRESENT').length / event.participantRoster.length * 100 : 0}%` }} /></div><div className="event-checkin-legend"><span><i className="is-present" /> Geldi</span><span><i className="is-absent" /> Gelmedi</span><span><i /> Henüz giriş yok</span></div><div className="event-presence-grid">{event.participantRoster.map((participant) => { const nextPresence = participant.presence === 'UNSET' ? 'PRESENT' : participant.presence === 'PRESENT' ? 'ABSENT' : 'UNSET'; const label = participant.presence === 'PRESENT' ? 'Geldi' : participant.presence === 'ABSENT' ? 'Gelmedi' : 'Henüz giriş yok'; return <button className={`event-presence-card is-${participant.presence.toLowerCase()}`} type="button" key={participant.attendanceId} disabled={isSubmitting || !event.canCheckIn} onClick={() => void setPresence(participant.attendanceId, nextPresence)}><b>{participant.initials}</b><span>{participant.name}</span><em>{label}</em></button>; })}</div></section>}
       {event.canManageMedia && <section className="event-media-manager"><strong>Etkinlik görselleri</strong><span>Kapak görselini değiştirebilir veya galeriye en fazla 5 görsel ekleyebilirsin.</span><div><label><span>Kapak değiştir</span><input type="file" accept="image/jpeg,image/png,image/webp" disabled={isUploadingMedia} onChange={(input) => void uploadMedia(input.target.files, 'COVER')} /></label><label><span>Galeriye ekle</span><input type="file" accept="image/jpeg,image/png,image/webp" multiple disabled={isUploadingMedia} onChange={(input) => void uploadMedia(input.target.files, 'GALLERY')} /></label></div>{isUploadingMedia && <em>Görseller güncelleniyor…</em>}</section>}
       {event.status === 'CANCELLED' ? <section className="event-status-card is-cancelled"><strong>İptal edildi</strong><span>Bu plan gerçekleşmeyecek; kayıtlarında görünür kalacak.</span></section> : event.isOrganizer && event.canManageEvent ? <section className="event-management" aria-label="Organizatör işlemleri"><p className="form-note">Organizatörsün</p>{event.organizerTransfer?.direction === 'OUTGOING' ? <p className="event-management-note">Devir teklifi gönderildi. Katılımcının yanıtı bekleniyor.</p> : <div className="event-management-actions">{event.participantRoster && event.participantRoster.length > 1 && <label><span>Organizatörlüğü devret</span><select value={transferRecipientId} onChange={(input) => setTransferRecipientId(input.target.value)} disabled={isSubmitting}><option value="">Katılımcı seç</option>{event.participantRoster.filter((participant) => event.organizerPreview.kind !== 'VISIBLE' || participant.userId !== event.organizerPreview.userId).map((participant) => <option value={participant.userId} key={participant.userId}>{participant.name}</option>)}</select><button className="secondary-button" type="button" onClick={() => void requestOrganizerTransfer()} disabled={isSubmitting || !transferRecipientId}>{isSubmitting ? 'Gönderiliyor…' : 'Devir teklifi gönder'}</button></label>}<button className="danger-button" type="button" onClick={() => setIsCancelDialogOpen(true)} disabled={isSubmitting}>Etkinliği iptal et</button></div>}</section> : event.isOrganizer ? <section className="event-management"><p className="form-note">Organizatörsün</p><p className="event-management-note">Bu etkinlik için artık yönetim işlemi yapılamaz.</p></section> : event.organizerTransfer?.direction === 'INCOMING' ? <section className="event-management" aria-label="Organizatörlük devri"><p className="form-note">Organizatörlük devri</p><p className="event-management-note">Bu etkinliğin organizatörlüğü sana devredilmek isteniyor.</p><div className="attendance-choice-group"><button className="attendance-choice is-action" type="button" onClick={() => void respondToOrganizerTransfer('ACCEPT')} disabled={isSubmitting}>Devral</button><button className="attendance-choice" type="button" onClick={() => void respondToOrganizerTransfer('DECLINE')} disabled={isSubmitting}>Reddet</button></div></section> : <section className="attendance-state" aria-label="Katılım yanıtın"><p className="form-note">Katılım yanıtın</p><div className="attendance-choice-group"><button className={['CONFIRMED', 'PENDING', 'WAITLISTED'].includes(event.ownAttendanceStatus ?? '') ? 'attendance-choice is-active' : 'attendance-choice'} type="button" onClick={() => void rsvp()} disabled={isSubmitting || !event.joinAvailable}>{isSubmitting ? 'İşleniyor…' : event.ownAttendanceStatus === 'WAITLISTED' ? 'Bekleme listesindeyim' : event.capacity.kind === 'LIMITED' && event.capacity.availableSeats === 0 ? 'Bekleme listesine katıl' : 'Katılıyorum'}</button><button className={event.ownAttendanceStatus === 'CANCELLED' ? 'attendance-choice is-active' : 'attendance-choice'} type="button" onClick={() => void cancelAttendance()} disabled={isSubmitting || event.ownAttendanceStatus === 'REJECTED'}>{isSubmitting ? 'İşleniyor…' : 'Katılmıyorum'}</button><button className={event.ownAttendanceStatus === 'MAYBE' ? 'attendance-choice is-active' : 'attendance-choice'} type="button" onClick={() => void setUndecided()} disabled={isSubmitting || event.ownAttendanceStatus === 'REJECTED'}>{isSubmitting ? 'İşleniyor…' : 'Belirsizim'}</button></div>{event.ownAttendanceStatus === 'WAITLISTED' && <p className="event-management-note">Yedektesin{event.waitlistPosition ? ` · sırada ${event.waitlistPosition}` : ''}. Yer açılırsa sırayla katılımın onaylanır.</p>}{event.ownAttendanceStatus === 'MAYBE' && <p className="event-management-note">Kontenjan tutmuyorsun; karar verdiğinde katılabilir veya yedeğe girebilirsin.</p>}{event.ownAttendanceStatus === 'CANCELLED' && <p className="event-management-note">Katılmıyorsun; kararın değişirse yeniden yanıt verebilirsin.</p>}</section>}
       {notice && <p className="form-note" role="status">{notice}</p>}
