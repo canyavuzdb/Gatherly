@@ -1,9 +1,10 @@
 import { randomUUID } from 'node:crypto';
-import { DataSource } from 'typeorm';
+import { DataSource, EntityManager } from 'typeorm';
 import { UserRecord } from '../auth/auth.persistence';
 import { EventsBusinessError } from './events.errors';
 import { canonicalEventCity } from './event-city';
 import { MessagingImplementation } from '../messaging/messaging.implementation';
+import type { CommittedFact } from '../messaging/messaging.interface';
 import type { RealtimeModule } from '../realtime/realtime.interface';
 import type {
   CompleteEventDefinition,
@@ -48,18 +49,23 @@ export class EventsImplementation implements EventModule {
     this.now = dependencies.now ?? (() => new Date());
     this.newShareToken = dependencies.newShareToken ?? randomUUID;
   }
+  private async enqueue(manager: EntityManager, facts: readonly CommittedFact[]): Promise<void> {
+    if (!this.messaging) return;
+    const messaging = this.messaging as unknown as { enqueue?: (manager: EntityManager, facts: readonly CommittedFact[]) => Promise<void>; publish: (facts: readonly CommittedFact[]) => Promise<void> };
+    if (messaging.enqueue) return messaging.enqueue(manager, facts);
+    await messaging.publish(facts);
+  }
 
   async decide(command: EventCommand): Promise<EventOutcome> {
     if (command.kind === 'CREATE_DRAFT') return this.createDraft(command);
     if (command.kind === 'PUBLISH_EVENT') return this.emitPublicChange(await this.publishEvent(command), 'EVENT');
-    if (command.kind === 'CANCEL_EVENT') { const outcome = await this.cancelEvent(command); if (outcome.kind === 'EVENT_CANCELLED') await this.publishEventFact('event.cancelled.v1', outcome.event.id, command.actorUserId, outcome.event.version); return this.emitPublicChange(outcome, 'EVENT'); }
+    if (command.kind === 'CANCEL_EVENT') return this.emitPublicChange(await this.cancelEvent(command), 'EVENT');
     if (command.kind === 'REQUEST_ORGANIZER_TRANSFER') return this.requestOrganizerTransfer(command);
     if (command.kind === 'RESPOND_TO_ORGANIZER_TRANSFER') return this.respondToOrganizerTransfer(command);
     if (command.kind === 'COMPLETE_DUE_EVENTS') return this.completeDueEvents(command);
-    const outcome = await this.reviseEvent(command); if (outcome.kind === 'EVENT_REVISED') await this.publishEventFact('event.revised.v1', outcome.event.id, command.actorUserId, outcome.event.version); return this.emitPublicChange(outcome, 'EVENT');
+    return this.emitPublicChange(await this.reviseEvent(command), 'EVENT');
   }
   private async emitPublicChange(outcome: EventOutcome, change: 'EVENT' | 'CAPACITY') { if ('event' in outcome && outcome.event.visibility === 'PUBLIC') await this.realtime?.emit({ kind: 'PUBLIC_EVENT_CHANGED', eventId: outcome.event.id, change }); return outcome; }
-  private async publishEventFact(eventName: 'event.revised.v1' | 'event.cancelled.v1', eventId: string, actorUserId: string, version: number) { if (!this.messaging) return; await this.messaging.publish([{ messageId: `event:${eventId}:${version}`, eventName, eventVersion: 1, occurredAt: this.now(), correlationId: eventId, payload: { recipientUserId: actorUserId, eventId, title: 'Event updated', body: 'An event you attend was updated.' } }]); }
 
   private async completeDueEvents(_command: CompleteDueEvents): Promise<EventOutcome> {
     const now = this.now();
@@ -76,10 +82,10 @@ export class EventsImplementation implements EventModule {
         event.version += 1;
       }
       if (dueEvents.length) await manager.save(dueEvents);
+      for (const event of dueEvents) await this.enqueue(manager, [{ messageId: `event:${event.id}:${event.version}`, eventName: 'event.completed.v1', eventVersion: 1, occurredAt: now, correlationId: event.id, payload: { recipientUserId: event.organizerId, eventId: event.id, title: 'Event completed', body: 'This event has ended.' } }]);
       return dueEvents;
     });
     for (const event of completed) {
-      await this.messaging?.publish([{ messageId: `event:${event.id}:${event.version}`, eventName: 'event.completed.v1', eventVersion: 1, occurredAt: now, correlationId: event.id, payload: { recipientUserId: event.organizerId, eventId: event.id, title: 'Event completed', body: 'This event has ended.' } }]);
       if (event.visibility === 'PUBLIC') {
         await this.realtime?.emit({ kind: 'PUBLIC_EVENT_CHANGED', eventId: event.id, change: 'EVENT' });
       } else {
@@ -125,6 +131,7 @@ export class EventsImplementation implements EventModule {
         }
         await manager.save(pendingTransfers);
       }
+      await this.enqueue(manager, [{ messageId: `event:${event.id}:${event.version}`, eventName: 'event.cancelled.v1', eventVersion: 1, occurredAt: this.now(), correlationId: event.id, payload: { recipientUserId: command.actorUserId, eventId: event.id, title: 'Event updated', body: 'An event you attend was updated.' } }]);
       return { ...draftOutcome(event, location), kind: 'EVENT_CANCELLED' };
     });
   }
@@ -141,9 +148,10 @@ export class EventsImplementation implements EventModule {
         existing.status = 'REVOKED'; existing.respondedAt = this.now(); existing.updatedByUserId = command.actorUserId; existing.updatedByKind = 'USER'; existing.version += 1;
         await manager.save(existing);
       }
-      return manager.save(manager.create(EventOrganizerTransferRecord, { eventId: event.id, fromUserId: command.actorUserId, toUserId: command.recipientUserId, status: 'PENDING', respondedAt: null, updatedByUserId: command.actorUserId, updatedByKind: 'USER', version: 1 }));
+      const transfer = await manager.save(manager.create(EventOrganizerTransferRecord, { eventId: event.id, fromUserId: command.actorUserId, toUserId: command.recipientUserId, status: 'PENDING', respondedAt: null, updatedByUserId: command.actorUserId, updatedByKind: 'USER', version: 1 }));
+      await this.enqueue(manager, [{ messageId: `organizer-transfer:${transfer.id}:${transfer.version}`, eventName: 'organizer-transfer.requested.v1', eventVersion: 1, occurredAt: this.now(), correlationId: transfer.id, payload: { recipientUserId: transfer.toUserId, eventId: transfer.eventId, title: 'Organizatörlük devri', body: 'Bu etkinliğin organizatörlüğü sana devredilmek isteniyor.' } }]);
+      return transfer;
     });
-    await this.publishOrganizerTransferFact('organizer-transfer.requested.v1', transfer, 'Organizatörlük devri', 'Bu etkinliğin organizatörlüğü sana devredilmek isteniyor.');
     return { kind: 'ORGANIZER_TRANSFER_REQUESTED' as const, transferId: transfer.id };
   }
 
@@ -160,23 +168,14 @@ export class EventsImplementation implements EventModule {
         event.organizerId = command.actorUserId; event.updatedByUserId = command.actorUserId; event.updatedByKind = 'USER'; event.version += 1;
         await manager.save(event);
       }
+      const eventName = command.response === 'ACCEPT' ? 'organizer-transfer.accepted.v1' : 'organizer-transfer.declined.v1';
+      await this.enqueue(manager, [{ messageId: `organizer-transfer:${transfer.id}:${transfer.version}`, eventName, eventVersion: 1, occurredAt: this.now(), correlationId: transfer.id, payload: { recipientUserId: transfer.fromUserId, eventId: transfer.eventId, title: command.response === 'ACCEPT' ? 'Organizatörlük devri kabul edildi' : 'Organizatörlük devri reddedildi', body: command.response === 'ACCEPT' ? 'Etkinliğin organizatörlüğü artık yeni katılımcıda.' : 'Etkinlik organizatörlüğü sende kalıyor.' } }]);
       return { transfer, event };
     });
-    await this.publishOrganizerTransferFact(
-      command.response === 'ACCEPT' ? 'organizer-transfer.accepted.v1' : 'organizer-transfer.declined.v1',
-      result.transfer,
-      command.response === 'ACCEPT' ? 'Organizatörlük devri kabul edildi' : 'Organizatörlük devri reddedildi',
-      command.response === 'ACCEPT' ? 'Etkinliğin organizatörlüğü artık yeni katılımcıda.' : 'Etkinlik organizatörlüğü sende kalıyor.',
-    );
     if (command.response === 'ACCEPT' && result.event.visibility === 'PUBLIC') await this.realtime?.emit({ kind: 'PUBLIC_EVENT_CHANGED', eventId: result.event.id, change: 'EVENT' });
     return { kind: command.response === 'ACCEPT' ? 'ORGANIZER_TRANSFER_ACCEPTED' as const : 'ORGANIZER_TRANSFER_DECLINED' as const, transferId: result.transfer.id };
   }
 
-  private async publishOrganizerTransferFact(eventName: 'organizer-transfer.requested.v1' | 'organizer-transfer.accepted.v1' | 'organizer-transfer.declined.v1', transfer: EventOrganizerTransferRecord, title: string, body: string) {
-    if (!this.messaging) return;
-    const recipientUserId = eventName === 'organizer-transfer.requested.v1' ? transfer.toUserId : transfer.fromUserId;
-    await this.messaging.publish([{ messageId: `organizer-transfer:${transfer.id}:${transfer.version}`, eventName, eventVersion: 1, occurredAt: this.now(), correlationId: transfer.id, payload: { recipientUserId, eventId: transfer.eventId, title, body } }]);
-  }
 
   private async publishEvent(command: PublishEvent): Promise<EventOutcome> {
     return this.dataSource.transaction(async (manager) => {
@@ -255,9 +254,10 @@ export class EventsImplementation implements EventModule {
       location.version += 1;
       await manager.save(event);
       await manager.save(location);
+      await this.enqueue(manager, [{ messageId: `event:${event.id}:${event.version}`, eventName: 'event.revised.v1', eventVersion: 1, occurredAt: this.now(), correlationId: event.id, payload: { recipientUserId: command.actorUserId, eventId: event.id, title: 'Event updated', body: 'An event you attend was updated.' } }]);
+      for (const attendance of promoted) await this.enqueue(manager, [{ messageId: `attendance:${attendance.id}:${attendance.version}`, eventName: 'attendance.promoted.v1', eventVersion: 1, occurredAt: this.now(), correlationId: attendance.id, payload: { recipientUserId: attendance.userId, eventId: event.id, title: 'You are in!', body: 'A place opened up and your attendance was confirmed.' } }]);
       return { outcome: { ...draftOutcome(event, location), kind: 'EVENT_REVISED' } as EventOutcome, promoted };
     });
-    for (const attendance of result.promoted) await this.messaging?.publish([{ messageId: `attendance:${attendance.id}:${attendance.version}`, eventName: 'attendance.promoted.v1', eventVersion: 1, occurredAt: this.now(), correlationId: attendance.id, payload: { recipientUserId: attendance.userId, eventId: command.eventId, title: 'You are in!', body: 'A place opened up and your attendance was confirmed.' } }]);
     return result.outcome;
   }
 
