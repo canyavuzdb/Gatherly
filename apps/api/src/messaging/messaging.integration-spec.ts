@@ -3,6 +3,23 @@ import type { NotificationsImplementation } from '../notifications/notifications
 import { Logger } from '@nestjs/common';
 
 describe('MessagingModule', () => {
+  it('writes a committed fact to the outbox through the caller transaction manager', async () => {
+    const messaging = new MessagingImplementation({ consume: jest.fn() } as unknown as NotificationsImplementation);
+    const manager = { query: jest.fn().mockResolvedValue(undefined) };
+    const fact = {
+      messageId: 'message-1', eventName: 'invitation.received.v1' as const, eventVersion: 1 as const,
+      occurredAt: new Date('2026-08-28T12:00:00.000Z'), correlationId: 'message-1',
+      payload: { recipientUserId: 'user-1', eventId: 'event-1', title: 'Invitation', body: 'You are invited.' },
+    };
+
+    await messaging.enqueue(manager as never, [fact]);
+
+    expect(manager.query).toHaveBeenCalledWith(
+      expect.stringContaining('INSERT INTO message_outbox'),
+      [fact.messageId, fact.eventName, fact.eventVersion, fact.occurredAt, fact.correlationId, JSON.stringify(fact.payload)],
+    );
+  });
+
   it('contains downstream delivery failures after a source transaction has committed', async () => {
     const logError = jest.spyOn(Logger.prototype, 'error').mockImplementation();
     const notifications = {
