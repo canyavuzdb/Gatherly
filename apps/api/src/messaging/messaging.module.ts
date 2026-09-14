@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { DataSource } from 'typeorm';
 import { NotificationsNestModule } from '../notifications/notifications.module';
 import { NotificationsImplementation } from '../notifications/notifications.implementation';
 import { MessagingImplementation } from './messaging.implementation';
@@ -8,9 +9,9 @@ import { MessagingImplementation } from './messaging.implementation';
   imports: [NotificationsNestModule],
   providers: [{
     provide: MessagingImplementation,
-    inject: [NotificationsImplementation, ConfigService],
-    useFactory: (notifications: NotificationsImplementation, config: ConfigService) =>
-      new MessagingImplementation(notifications, config.get<string>('RABBITMQ_URL')),
+    inject: [NotificationsImplementation, ConfigService, DataSource],
+    useFactory: (notifications: NotificationsImplementation, config: ConfigService, dataSource: DataSource) =>
+      new MessagingImplementation(notifications, config.get<string>('RABBITMQ_URL'), dataSource),
   }],
   exports: [MessagingImplementation],
 })
