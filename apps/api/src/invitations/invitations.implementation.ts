@@ -1,8 +1,9 @@
-import { DataSource, In } from 'typeorm';
+import { DataSource, EntityManager, In } from 'typeorm';
 import { UserRecord } from '../auth/auth.persistence';
 import { EventRecord, InvitationRecord } from '../events/events.persistence';
 import { InvitationsBusinessError } from './invitations.errors';
 import { MessagingImplementation } from '../messaging/messaging.implementation';
+import type { CommittedFact } from '../messaging/messaging.interface';
 import type { RealtimeModule } from '../realtime/realtime.interface';
 import type { CreateInvitation, DeclineInvitation, InvitationCommand, InvitationView, InvitationsModule, ListEventInvitations, ListMyPendingInvitations, RevokeInvitation } from './invitations.interface';
 
@@ -14,6 +15,12 @@ export class InvitationsImplementation implements InvitationsModule {
     if (command.kind === 'DECLINE_INVITATION') return this.decline(command);
     if (command.kind === 'LIST_EVENT_INVITATIONS') return this.listEvent(command);
     return this.listPending(command);
+  }
+  private async enqueue(manager: EntityManager, facts: readonly CommittedFact[]): Promise<void> {
+    if (!this.messaging) return;
+    const messaging = this.messaging as unknown as { enqueue?: (manager: EntityManager, facts: readonly CommittedFact[]) => Promise<void>; publish: (facts: readonly CommittedFact[]) => Promise<void> };
+    if (messaging.enqueue) return messaging.enqueue(manager, facts);
+    await messaging.publish(facts);
   }
   private async listEvent(command: ListEventInvitations): Promise<InvitationView[]> {
     const event = await this.dataSource.getRepository(EventRecord).findOneBy({ id: command.eventId, organizerId: command.actorUserId });
@@ -33,9 +40,10 @@ export class InvitationsImplementation implements InvitationsModule {
       const invitation = existing
         ? await manager.save(Object.assign(existing, { status: 'PENDING', expiresAt: command.expiresAt, acceptedAt: null, revokedAt: null, invitedByUserId: actor.id, updatedByUserId: actor.id, updatedByKind: 'USER', version: existing.version + 1 }))
         : await manager.save(manager.create(InvitationRecord, { id: command.invitationId, eventId: event.id, recipientUserId: recipient.id, invitedByUserId: actor.id, status: 'PENDING', expiresAt: command.expiresAt, acceptedAt: null, revokedAt: null, updatedByUserId: actor.id, updatedByKind: 'USER', version: 1 }));
-      return this.view(invitation, event);
+      const result = this.view(invitation, event);
+      await this.enqueue(manager, [{ messageId: `invitation:${result.id}:${result.version}`, eventName: 'invitation.received.v1', eventVersion: 1, occurredAt: this.now(), correlationId: result.id, payload: { recipientUserId: result.recipientUserId, eventId: result.eventId, title: 'New invitation', body: 'You have been invited to an event.' } }]);
+      return result;
     });
-    await this.messaging?.publish([{ messageId: `invitation:${result.id}:${result.version}`, eventName: 'invitation.received.v1', eventVersion: 1, occurredAt: this.now(), correlationId: result.id, payload: { recipientUserId: result.recipientUserId, eventId: result.eventId, title: 'New invitation', body: 'You have been invited to an event.' } }]);
     await this.realtime?.emit({ kind: 'USER_EVENT_CHANGED', recipientUserId: result.recipientUserId, eventId: result.eventId, change: 'INVITATION' });
     return result;
   }
@@ -50,9 +58,10 @@ export class InvitationsImplementation implements InvitationsModule {
       if (invitation.status === 'REVOKED') return this.view(invitation, event);
       if (invitation.status !== 'PENDING') throw new InvitationsBusinessError('INVITATION_NOT_REVOCABLE');
       invitation.status = 'REVOKED'; invitation.revokedAt = this.now(); invitation.updatedByUserId = command.actorUserId; invitation.updatedByKind = 'USER'; invitation.version += 1;
-      return this.view(await manager.save(invitation), event);
+      const result = this.view(await manager.save(invitation), event);
+      await this.enqueue(manager, [{ messageId: `invitation:${result.id}:${result.version}`, eventName: 'invitation.revoked.v1', eventVersion: 1, occurredAt: this.now(), correlationId: result.id, payload: { recipientUserId: result.recipientUserId, eventId: result.eventId, title: 'Invitation revoked', body: 'An event invitation was revoked.' } }]);
+      return result;
     });
-    await this.messaging?.publish([{ messageId: `invitation:${result.id}:${result.version}`, eventName: 'invitation.revoked.v1', eventVersion: 1, occurredAt: this.now(), correlationId: result.id, payload: { recipientUserId: result.recipientUserId, eventId: result.eventId, title: 'Invitation revoked', body: 'An event invitation was revoked.' } }]);
     await this.realtime?.emit({ kind: 'USER_EVENT_CHANGED', recipientUserId: result.recipientUserId, eventId: result.eventId, change: 'INVITATION' });
     return result;
   }
