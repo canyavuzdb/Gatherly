@@ -18,6 +18,7 @@ import { RealtimeNestModule } from './realtime/realtime.module';
 import { LocationSearchNestModule } from './location-search/location-search.module';
 import { ParticipationNestModule } from './participation/participation.module';
 import { FeedbackNestModule } from './feedback/feedback.module';
+import { EventRoutingNestModule } from './event-routing/event-routing.module';
 
 @Module({
   imports: [
@@ -50,6 +51,7 @@ import { FeedbackNestModule } from './feedback/feedback.module';
     ParticipationNestModule,
     FeedbackNestModule,
     LocationSearchNestModule,
+    EventRoutingNestModule,
   ],
   controllers: [AppController],
 })

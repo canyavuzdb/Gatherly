@@ -16,6 +16,9 @@ export default function NewEventPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [coverFile, setCoverFile] = useState<File | null>(null);
   const [galleryFiles, setGalleryFiles] = useState<File[]>([]);
+  const [routePreview, setRoutePreview] = useState<{ distanceMeters: number; durationSeconds: number } | null>(null);
+  const [isRouteLoading, setIsRouteLoading] = useState(false);
+  const [routePreviewError, setRoutePreviewError] = useState('');
   const [form, setForm] = useState({ title: '', description: '', categoryId: '', startsAt: localDateTime(1), endsAt: localDateTime(3), city: 'Istanbul', district: '', venueName: '', address: '', latitude: null as number | null, longitude: null as number | null, routeMode: 'NONE' as 'NONE' | 'WALKING' | 'CYCLING' | 'DRIVING', routeEndLatitude: null as number | null, routeEndLongitude: null as number | null, capacity: '', visibility: 'PUBLIC' as 'PUBLIC' | 'UNLISTED' | 'PRIVATE', joinPolicy: 'OPEN' as 'OPEN' | 'APPROVAL_REQUIRED' | 'INVITE_ONLY', addressVisibility: 'EVENT_VIEWERS' as 'EVENT_VIEWERS' | 'CONFIRMED_ATTENDEES' });
 
   useEffect(() => {
@@ -32,6 +35,26 @@ export default function NewEventPage() {
     }
     void loadCategories();
   }, [router]);
+
+  useEffect(() => {
+    if (form.routeMode === 'NONE' || form.latitude === null || form.longitude === null || form.routeEndLatitude === null || form.routeEndLongitude === null) {
+      setRoutePreview(null); setIsRouteLoading(false); setRoutePreviewError(''); return;
+    }
+    const controller = new AbortController();
+    const timer = window.setTimeout(async () => {
+      setIsRouteLoading(true); setRoutePreviewError('');
+      try {
+        const response = await authenticatedFetch('/api/v1/event-routes/preview', { method: 'POST', headers: { 'content-type': 'application/json' }, signal: controller.signal, body: JSON.stringify({ mode: form.routeMode, startLatitude: form.latitude, startLongitude: form.longitude, endLatitude: form.routeEndLatitude, endLongitude: form.routeEndLongitude }) });
+        if (!response.ok) throw new Error('Rota şu anda hesaplanamadı.');
+        const route = await response.json() as { distanceMeters: number; durationSeconds: number };
+        setRoutePreview(route);
+      } catch (error) {
+        if (error instanceof DOMException && error.name === 'AbortError') return;
+        setRoutePreview(null); setRoutePreviewError(error instanceof Error ? error.message : 'Rota şu anda hesaplanamadı.');
+      } finally { if (!controller.signal.aborted) setIsRouteLoading(false); }
+    }, 550);
+    return () => { window.clearTimeout(timer); controller.abort(); };
+  }, [form.routeMode, form.latitude, form.longitude, form.routeEndLatitude, form.routeEndLongitude]);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -65,7 +88,7 @@ export default function NewEventPage() {
     <label className="field event-create-wide"><span className="field-label">Adres <small>İsteğe bağlı</small></span><input className="field-input" value={form.address} onChange={(event) => setForm({ ...form, address: event.target.value })} /></label>
     <div className="event-create-wide"><EventLocationPicker label={form.routeMode === 'NONE' ? 'Haritada konum' : 'Başlangıç noktası'} city={form.city} value={{ latitude: form.latitude, longitude: form.longitude }} onChange={(location) => setForm((current) => ({ ...current, latitude: location.latitude, longitude: location.longitude, venueName: location.venueName ?? current.venueName, address: location.address ?? current.address, district: location.district ?? current.district }))} /></div>
     <section className="event-create-wide route-choice"><div><span className="field-label">Rota</span><p>Başlangıç ve bitiş noktası olan etkinlikler için rota türünü seç.</p></div><select className="field-input" value={form.routeMode} onChange={(event) => setForm((current) => ({ ...current, routeMode: event.target.value as typeof current.routeMode, routeEndLatitude: event.target.value === 'NONE' ? null : current.routeEndLatitude, routeEndLongitude: event.target.value === 'NONE' ? null : current.routeEndLongitude }))}><option value="NONE">Tek noktada buluşma</option><option value="WALKING">Yürüyüş rotası</option><option value="CYCLING">Bisiklet rotası</option><option value="DRIVING">Araç rotası</option></select></section>
-    {form.routeMode !== 'NONE' && <div className="event-create-wide"><EventLocationPicker label="Bitiş noktası" city={form.city} value={{ latitude: form.routeEndLatitude, longitude: form.routeEndLongitude }} onChange={(location) => setForm((current) => ({ ...current, routeEndLatitude: location.latitude, routeEndLongitude: location.longitude }))} /></div>}
+    {form.routeMode !== 'NONE' && <div className="event-create-wide"><EventLocationPicker label="Bitiş noktası" city={form.city} value={{ latitude: form.routeEndLatitude, longitude: form.routeEndLongitude }} onChange={(location) => setForm((current) => ({ ...current, routeEndLatitude: location.latitude, routeEndLongitude: location.longitude }))} />{(isRouteLoading || routePreview || routePreviewError) && <section className="route-preview" aria-live="polite"><div><span className="auth-eyebrow">ROTA ÖNİZLEMESİ</span><strong>{form.routeMode === 'WALKING' ? 'Yürüyüş' : form.routeMode === 'CYCLING' ? 'Bisiklet' : 'Araç'} rotası</strong></div>{isRouteLoading ? <p>Mesafe ve tahmini süre hesaplanıyor…</p> : routePreview ? <p><b>{formatDistance(routePreview.distanceMeters)}</b><span>Başlangıçtan bitişe yaklaşık <b>{formatDuration(routePreview.durationSeconds)}</b>.</span></p> : <p>{routePreviewError}</p>}</section>}</div>}
     <div className="event-create-wide event-media-fields"><div><span>Etkinlik görselleri</span><small>JPEG, PNG veya WebP · her biri en fazla 10 MB</small></div><label className="event-file-select"><span>Kapak görseli</span><input type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => setCoverFile(event.target.files?.[0] ?? null)} />{coverFile && <em>{coverFile.name}</em>}</label><label className="event-file-select"><span>Galeri görselleri</span><input type="file" accept="image/jpeg,image/png,image/webp" multiple onChange={(event) => setGalleryFiles(Array.from(event.target.files ?? []).slice(0, 5))} />{galleryFiles.length > 0 && <em>{galleryFiles.length} görsel seçildi</em>}</label></div>
     <label className="field"><span className="field-label">Görünürlük</span><select className="field-input" value={form.visibility} onChange={(event) => setForm({ ...form, visibility: event.target.value as typeof form.visibility })}><option value="PUBLIC">Herkese açık</option><option value="UNLISTED">Bağlantısı olanlar</option><option value="PRIVATE">Gizli</option></select></label>
     <label className="field"><span className="field-label">Katılım</span><select className="field-input" value={form.joinPolicy} onChange={(event) => setForm({ ...form, joinPolicy: event.target.value as typeof form.joinPolicy })}><option value="OPEN">Herkes katılabilir</option><option value="APPROVAL_REQUIRED">Onay gerekli</option><option value="INVITE_ONLY">Sadece davetliler</option></select></label>
@@ -83,3 +106,5 @@ async function uploadAndAttach(token: string, eventId: string, file: File, role:
   if (!attachResponse.ok) throw new Error(await messageFor(attachResponse, 'Görsel etkinliğe eklenemedi.'));
 }
 function localDateTime(hoursFromNow: number) { const date = new Date(Date.now() + hoursFromNow * 60 * 60 * 1000); date.setMinutes(0, 0, 0); const offset = date.getTimezoneOffset(); return new Date(date.getTime() - offset * 60_000).toISOString().slice(0, 16); }
+function formatDistance(meters: number) { return meters >= 1_000 ? `${(meters / 1_000).toLocaleString('tr-TR', { maximumFractionDigits: 1 })} km` : `${Math.round(meters)} m`; }
+function formatDuration(seconds: number) { const minutes = Math.max(1, Math.round(seconds / 60)); return minutes >= 60 ? `${Math.floor(minutes / 60)} sa${minutes % 60 ? ` ${minutes % 60} dk` : ''}` : `${minutes} dk`; }
