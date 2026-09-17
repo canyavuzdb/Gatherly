@@ -82,7 +82,7 @@ export class EventsImplementation implements EventModule {
         event.version += 1;
       }
       if (dueEvents.length) await manager.save(dueEvents);
-      for (const event of dueEvents) await this.enqueue(manager, [{ messageId: `event:${event.id}:${event.version}`, eventName: 'event.completed.v1', eventVersion: 1, occurredAt: now, correlationId: event.id, payload: { recipientUserId: event.organizerId, eventId: event.id, title: 'Event completed', body: 'This event has ended.' } }]);
+      for (const event of dueEvents) await this.enqueue(manager, [{ messageId: `event:${event.id}:${event.version}`, eventName: 'event.completed.v1', eventVersion: 1, occurredAt: now, correlationId: event.id, payload: { recipientUserId: event.organizerId, eventId: event.id, title: 'Event completed', body: 'This event has ended.' } }, { messageId: `attendance-finalization:${event.id}:${event.version}`, eventName: 'attendance.finalization-needed.v1', eventVersion: 1, occurredAt: now, correlationId: event.id, payload: { recipientUserId: event.organizerId, eventId: event.id, title: 'Katılım sonuçlarını tamamla', body: 'Etkinliğin sona erdi. Katılımcıların geldi veya gelmedi durumlarını kontrol edebilirsin.' } }]);
       return dueEvents;
     });
     for (const event of completed) {

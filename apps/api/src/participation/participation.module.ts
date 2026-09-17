@@ -7,12 +7,14 @@ import { ParticipationHttpController } from './participation.http';
 import { ParticipationImplementation } from './participation.implementation';
 import { CheckInRecord, ParticipationOutcomeRecord } from './participation.persistence';
 import { ParticipationFinalizationScheduler } from './participation.scheduler';
+import { MessagingNestModule } from '../messaging/messaging.module';
+import { MessagingImplementation } from '../messaging/messaging.implementation';
 
 @Module({
-  imports: [AuthNestModule, TypeOrmModule.forFeature([EventRecord, AttendanceRecord, CheckInRecord, ParticipationOutcomeRecord])],
+  imports: [AuthNestModule, MessagingNestModule, TypeOrmModule.forFeature([EventRecord, AttendanceRecord, CheckInRecord, ParticipationOutcomeRecord])],
   controllers: [ParticipationHttpController],
   providers: [
-    { provide: ParticipationImplementation, inject: [DataSource], useFactory: (dataSource: DataSource) => new ParticipationImplementation(dataSource) },
+    { provide: ParticipationImplementation, inject: [DataSource, MessagingImplementation], useFactory: (dataSource: DataSource, messaging: MessagingImplementation) => new ParticipationImplementation(dataSource, undefined, messaging) },
     { provide: ParticipationFinalizationScheduler, inject: [ParticipationImplementation], useFactory: (participation: ParticipationImplementation) => new ParticipationFinalizationScheduler(participation) },
   ],
 })

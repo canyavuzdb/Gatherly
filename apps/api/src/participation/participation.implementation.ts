@@ -2,13 +2,19 @@ import { DataSource, In, LessThanOrEqual } from 'typeorm';
 import { AttendanceRecord, EventRecord } from '../events/events.persistence';
 import { CheckInRecord, ParticipationOutcomeRecord } from './participation.persistence';
 import { ParticipationBusinessError } from './participation.errors';
+import { MessagingImplementation } from '../messaging/messaging.implementation';
+import type { CommittedFact } from '../messaging/messaging.interface';
 import type { ParticipationCommand, ParticipationModule, ParticipationOutcome, RecordCheckIn, RevokeCheckIn, SetAttendancePresence } from './participation.interface';
 
 const CHECK_IN_EARLY_WINDOW_MS = 30 * 60 * 1000;
 const CHECK_IN_LATE_WINDOW_MS = 2 * 60 * 60 * 1000;
 
 export class ParticipationImplementation implements ParticipationModule {
-  constructor(private readonly dataSource: DataSource, private readonly now = () => new Date()) {}
+  constructor(private readonly dataSource: DataSource, private readonly now = () => new Date(), private readonly messaging?: MessagingImplementation) {}
+
+  private async enqueue(manager: import('typeorm').EntityManager, facts: readonly CommittedFact[]) {
+    if (this.messaging) await this.messaging.enqueue(manager, facts);
+  }
 
   async decide(command: ParticipationCommand): Promise<ParticipationOutcome> {
     if (command.kind === 'FINALIZE_DUE_PARTICIPATION') return this.finalizeDueParticipation();
@@ -91,7 +97,8 @@ export class ParticipationImplementation implements ParticipationModule {
         for (const record of presenceRecords) presenceByAttendanceId.set(record.attendanceId, record.kind === 'CHECKED_IN' ? 'PRESENT' : record.kind === 'MARKED_ABSENT' ? 'ABSENT' : 'UNSET');
         const missing = attendances.filter((attendance) => !completedAttendanceIds.has(attendance.id));
         if (!missing.length) return false;
-        await manager.save(missing.map((attendance) => manager.create(ParticipationOutcomeRecord, { eventId: lockedEvent.id, attendanceId: attendance.id, userId: attendance.userId, outcome: presenceByAttendanceId.get(attendance.id) === 'PRESENT' ? 'ATTENDED' : 'NO_SHOW' })));
+        const outcomes = await manager.save(missing.map((attendance) => manager.create(ParticipationOutcomeRecord, { eventId: lockedEvent.id, attendanceId: attendance.id, userId: attendance.userId, outcome: presenceByAttendanceId.get(attendance.id) === 'PRESENT' ? 'ATTENDED' : 'NO_SHOW' })));
+        await this.enqueue(manager, outcomes.filter((outcome) => outcome.outcome === 'ATTENDED').map((outcome) => ({ messageId: `event-review-available:${outcome.eventId}:${outcome.attendanceId}`, eventName: 'event.review-available.v1' as const, eventVersion: 1 as const, occurredAt: this.now(), correlationId: outcome.attendanceId, payload: { recipientUserId: outcome.userId, eventId: outcome.eventId, title: 'Etkinliğini değerlendirebilirsin', body: 'Katıldığın etkinlik ve organizatör hakkındaki görüşünü paylaşabilirsin.' } })));
         return true;
       });
       if (finalized) finalizedEventIds.push(event.id);
