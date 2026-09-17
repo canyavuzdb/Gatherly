@@ -48,6 +48,9 @@ export class EventDiscoveryImplementation implements EventDiscoveryModule {
     const category = await this.dataSource.getRepository(CategoryRecord).findOneBy({ id: event.categoryId });
     if (!location || !category) return denied();
     const attendance = request.viewer ? await this.dataSource.getRepository(AttendanceRecord).findOneBy({ eventId: event.id, userId: request.viewer.userId }) : null;
+    const ownParticipationOutcome = request.viewer
+      ? await this.dataSource.getRepository(ParticipationOutcomeRecord).findOneBy({ eventId: event.id, userId: request.viewer.userId })
+      : null;
     const activeAttendance = attendance && ['CONFIRMED', 'PENDING', 'WAITLISTED'].includes(attendance.status);
     const organizer = event.organizerId === request.viewer?.userId;
     const invitation = request.viewer ? await this.dataSource.getRepository(InvitationRecord).findOneBy({ eventId: event.id, recipientUserId: request.viewer.userId, status: 'PENDING' }) : null;
@@ -84,7 +87,7 @@ export class EventDiscoveryImplementation implements EventDiscoveryModule {
     const now = this.now();
     const canManageEvent = organizer && ['DRAFT', 'PUBLISHED'].includes(event.status) && event.startsAt > now;
     const canCheckIn = organizer && event.status !== 'CANCELLED' && now.getTime() >= new Date(event.startsAt).getTime() - 30 * 60 * 1000 && now.getTime() <= new Date(event.endsAt).getTime() + 2 * 60 * 60 * 1000;
-    return { ...detailCard, status: event.status, version: event.version, description: event.description, visibility: event.visibility, joinPolicy: event.joinPolicy, ...(invitation?.status === 'PENDING' ? { invitationId: invitation.id } : {}), organizerPreview, ...(participantPreview ? { participantPreview } : {}), ...(participantRoster ? { participantRoster } : {}), ...(maybeRoster ? { maybeRoster } : {}), waitlistCount, ...(waitlistPosition ? { waitlistPosition } : {}), ...(organizerTransfer ? { organizerTransfer } : {}), ...(mapLocation ? { mapLocation } : {}), ...(route ? { route } : {}), isOrganizer: organizer, location: { ...card.location, address: addressVisible ? location.address : null }, galleryMediaAssetIds: galleryMedia.map((media) => media.mediaAssetId), canManageMedia: canManageEvent, canManageEvent, canCheckIn, joinAvailable: event.status === 'PUBLISHED' && event.startsAt > now && Boolean(request.viewer) && hasJoinEligibility && (!attendance || attendance.status === 'CANCELLED' || attendance.status === 'MAYBE') };
+    return { ...detailCard, status: event.status, version: event.version, description: event.description, visibility: event.visibility, joinPolicy: event.joinPolicy, ...(invitation?.status === 'PENDING' ? { invitationId: invitation.id } : {}), ...(ownParticipationOutcome ? { ownParticipationOutcome: ownParticipationOutcome.outcome as 'ATTENDED' | 'NO_SHOW' } : {}), organizerPreview, ...(participantPreview ? { participantPreview } : {}), ...(participantRoster ? { participantRoster } : {}), ...(maybeRoster ? { maybeRoster } : {}), waitlistCount, ...(waitlistPosition ? { waitlistPosition } : {}), ...(organizerTransfer ? { organizerTransfer } : {}), ...(mapLocation ? { mapLocation } : {}), ...(route ? { route } : {}), isOrganizer: organizer, location: { ...card.location, address: addressVisible ? location.address : null }, galleryMediaAssetIds: galleryMedia.map((media) => media.mediaAssetId), canManageMedia: canManageEvent, canManageEvent, canCheckIn, joinAvailable: event.status === 'PUBLISHED' && event.startsAt > now && Boolean(request.viewer) && hasJoinEligibility && (!attendance || attendance.status === 'CANCELLED' || attendance.status === 'MAYBE') };
   }
   async personalCalendar(request: PersonalCalendar): Promise<CalendarPage> {
     const limit = request.limit ?? 20;
