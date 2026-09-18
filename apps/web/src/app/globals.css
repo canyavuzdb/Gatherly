@@ -375,6 +375,7 @@ textarea {
 .dashboard-row > span { display: grid; gap: 5px; }
 .dashboard-row strong { font-size: 14px; }
 .dashboard-row small, .dashboard-row time, .dashboard-row em { color: var(--muted); font-size: 12px; font-style: normal; }
+.dashboard-owner-mark { margin-left: 5px; color: var(--muted) !important; font-size: 9px !important; font-weight: 600; letter-spacing: 0; white-space: nowrap; }
 .dashboard-row.is-read { opacity: .62; }
 .dashboard-row.is-read > span > strong { width: fit-content; margin: 0 -2px; padding: 0 2px; background: linear-gradient(177deg, transparent 44%, rgba(236, 201, 48, .72) 45%, rgba(236, 201, 48, .72) 84%, transparent 85%); }
 .settings-form { display: grid; width: min(100%, 480px); gap: 15px; padding-top: 13px; }
