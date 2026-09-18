@@ -18,6 +18,7 @@ type EventCard = {
   location: { city: string; district: string; venueName: string | null };
   capacity: { kind: 'UNLIMITED' } | { kind: 'LIMITED'; capacity: number; confirmedCount: number; availableSeats: number };
   coverMediaAssetId?: string;
+  eventRating?: { average: number; count: number };
   route?: RouteSummary;
   mapLocation?: { latitude: number; longitude: number };
 };
@@ -105,7 +106,7 @@ function DiscoverEvent({ event }: { event: EventCard }) {
   const capacity = event.capacity.kind === 'UNLIMITED' ? 'Katılım açık' : `${event.capacity.availableSeats} yer kaldı`;
   const routeSummary = routeSummaryLabel(event.route);
   return <Link className={event.status === 'CANCELLED' ? 'discover-event is-cancelled' : 'discover-event'} href={`/events/${event.id}`}>
-    <time>{formatTime(event.startsAt)}</time><i className={categoryToneClass(event.category.name)} aria-hidden="true" /><span className="discover-event-content">{event.coverMediaAssetId && <img src={`${apiUrl}/api/v1/media/${event.coverMediaAssetId}`} alt="" onError={(image) => { image.currentTarget.style.display = 'none'; }} />}<span className="discover-event-copy"><small>{event.status === 'CANCELLED' ? 'İPTAL EDİLDİ' : event.category.name}</small><strong>{event.title}</strong><em>{location} · {event.status === 'CANCELLED' ? 'İptal edildi' : capacity}</em>{routeSummary && <span className="event-route-summary">↗ {routeSummary}</span>}</span></span><b aria-hidden="true">↗</b>
+    <time>{formatTime(event.startsAt)}</time><i className={categoryToneClass(event.category.name)} aria-hidden="true" /><span className="discover-event-content">{event.coverMediaAssetId && <img src={`${apiUrl}/api/v1/media/${event.coverMediaAssetId}`} alt="" onError={(image) => { image.currentTarget.style.display = 'none'; }} />}<span className="discover-event-copy"><small>{event.status === 'CANCELLED' ? 'İPTAL EDİLDİ' : event.category.name}</small><strong>{event.title}</strong><em>{location} · {event.status === 'CANCELLED' ? 'İptal edildi' : capacity}</em>{event.eventRating ? <span className="event-rating-summary" aria-label={`Etkinlik puanı ${event.eventRating.average} / 5`}>★ {event.eventRating.average} · {event.eventRating.count} değerlendirme</span> : <span className="event-rating-summary is-empty">Henüz değerlendirilmedi</span>}{routeSummary && <span className="event-route-summary">↗ {routeSummary}</span>}</span></span><b aria-hidden="true">↗</b>
   </Link>;
 }
 
